@@ -4,7 +4,7 @@ import json
 import os
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import yaml
 from pydantic import BaseModel, Field, validator
@@ -42,22 +42,45 @@ class Metric(BaseModel):
     description: Optional[str] = Field(None, description="Description of what this metric measures")
 
 
-class TableConfig(BaseModel):
-    """Table configuration."""
+class UnityTableConfig(BaseModel):
+    """Unity Catalog table configuration used by all layers."""
     name: str = Field(..., description="Name of the table")
-    layer: Layer = Field(..., description="Medallion layer (bronze, silver, gold)")
+    catalog: str = Field(..., description="Unity Catalog name")
+    schema: str = Field(..., description="Schema name")
     description: Optional[str] = Field(None, description="Description of the table's purpose")
     properties: Dict[str, Any] = Field(default_factory=dict, description="Delta table properties")
-    comment: Optional[str] = Field(None, description="Table comment")
     expectations: List[Expectation] = Field(default_factory=list, description="Data quality expectations")
     metrics: List[Metric] = Field(default_factory=list, description="Data quality metrics")
+    tags: Dict[str, str] = Field(default_factory=dict, description="Unity Catalog tags")
+    column_comments: Dict[str, str] = Field(default_factory=dict, description="Column-level comments")
 
 
-class Config(BaseModel):
-    """Root configuration model."""
-    table: TableConfig = Field(..., description="Table configuration")
+class AutoLoaderSource(BaseModel):
+    """Auto Loader source configuration for bronze layer."""
+    type: Literal["auto_loader"] = Field("auto_loader", description="Source type identifier")
+    path: str = Field(..., description="Path to source data")
+    format: str = Field("cloudFiles", description="Source format (default: cloudFiles)")
+    options: Dict[str, Any] = Field(default_factory=dict, description="Additional Auto Loader options")
+
+
+class JDBCSource(BaseModel):
+    """JDBC source configuration for bronze layer."""
+    type: Literal["jdbc"] = Field("jdbc", description="Source type identifier")
+    url: str = Field(..., description="JDBC connection URL")
+    table: str = Field(..., description="Source table name")
+    options: Dict[str, Any] = Field(default_factory=dict, description="Additional JDBC options")
+
+
+class TableConfig(BaseModel):
+    """Base table configuration for all layers."""
+    table: UnityTableConfig = Field(..., description="Unity Catalog table configuration")
     dependencies: List[str] = Field(default_factory=list, description="List of dependent table names")
     version: str = Field("1.0", description="Configuration schema version")
+
+
+class BronzeConfig(TableConfig):
+    """Bronze layer configuration with source configuration."""
+    source: Union[AutoLoaderSource, JDBCSource] = Field(..., description="Source configuration")
 
 
 class ConfigurationManager:
@@ -70,16 +93,17 @@ class ConfigurationManager:
         Args:
             config_path: Optional path to a YAML/JSON configuration file
         """
-        self._config: Optional[Config] = None
+        self._config: Optional[Union[TableConfig, BronzeConfig]] = None
         if config_path:
             self.load_config(config_path)
 
-    def load_config(self, path: Union[str, Path]) -> Config:
+    def load_config(self, path: Union[str, Path], layer: Optional[Layer] = None) -> Union[TableConfig, BronzeConfig]:
         """
         Load configuration from a YAML or JSON file.
 
         Args:
             path: Path to the configuration file (must end in .yaml, .yml, or .json)
+            layer: Optional layer to validate against. If bronze, uses BronzeConfig
 
         Returns:
             Config object containing the loaded configuration
@@ -99,12 +123,14 @@ class ConfigurationManager:
                         f"Unsupported file format: {path.suffix}. Use .yaml, .yml, or .json"
                     )
             
-            self._config = Config(**config_dict)
+            # Use BronzeConfig for bronze layer, TableConfig for others
+            config_class = BronzeConfig if layer == Layer.BRONZE else TableConfig
+            self._config = config_class(**config_dict)
             return self._config
         except Exception as e:
             raise ConfigurationError(f"Failed to load configuration from {path}: {str(e)}")
 
-    def get_config(self) -> Config:
+    def get_config(self) -> Union[TableConfig, BronzeConfig]:
         """
         Get the current configuration.
 
@@ -118,7 +144,7 @@ class ConfigurationManager:
             raise ConfigurationError("No configuration has been loaded")
         return self._config
 
-    def merge_configs(self, base: Config, override: Dict[str, Any]) -> Config:
+    def merge_configs(self, base: Union[TableConfig, BronzeConfig], override: Dict[str, Any]) -> Union[TableConfig, BronzeConfig]:
         """
         Merge a base configuration with override values.
 
@@ -140,12 +166,13 @@ class ConfigurationManager:
                 and isinstance(merged[key], dict)
                 and isinstance(value, dict)
             ):
-                merged[key] = self.merge_configs(Config(**{key: merged[key]}), {key: value}).dict()[key]
+                merged[key].update(value)
             else:
                 merged[key] = value
         
         # Create new config from merged dict
-        return Config(**merged)
+        config_class = type(base)  # Preserve the original config type
+        return config_class(**merged)
 
     def update_config(self, updates: Dict[str, Any]) -> None:
         """

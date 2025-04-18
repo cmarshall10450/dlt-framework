@@ -1,6 +1,6 @@
 """Delta Live Tables integration module for the DLT Medallion Framework."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import dlt
 from pyspark.sql import DataFrame
@@ -10,6 +10,106 @@ from .exceptions import DLTFrameworkError
 
 class DLTIntegration:
     """Handles integration with Delta Live Tables functionality."""
+
+    @staticmethod
+    def configure_auto_loader(
+        source_path: str,
+        format: str = "cloudFiles",
+        schema_location: Optional[str] = None,
+        schema_evolution: bool = True,
+        rescue_data: bool = True,
+        **options: Any
+    ) -> Dict[str, Any]:
+        """
+        Configure Auto Loader for streaming ingestion.
+
+        Args:
+            source_path: Path to source data
+            format: Source format (default: cloudFiles)
+            schema_location: Optional path to store schema information
+            schema_evolution: Whether to enable schema evolution
+            rescue_data: Whether to rescue malformed records
+            **options: Additional Auto Loader options
+
+        Returns:
+            Dictionary of Auto Loader configuration options
+
+        Example:
+            config = DLTIntegration.configure_auto_loader(
+                source_path="s3://bucket/path",
+                format="cloudFiles",
+                cloudFiles={"format": "json"},
+                schema_evolution=True
+            )
+        """
+        auto_loader_config = {
+            "format": format,
+            "path": source_path,
+            "cloudFiles.schemaEvolution.enabled": str(schema_evolution).lower(),
+            "cloudFiles.rescueDataOnError": str(rescue_data).lower(),
+        }
+
+        if schema_location:
+            auto_loader_config["cloudFiles.schemaLocation"] = schema_location
+
+        # Add any additional options
+        for key, value in options.items():
+            if isinstance(value, dict):
+                # Handle nested options like cloudFiles.format
+                for nested_key, nested_value in value.items():
+                    full_key = f"{key}.{nested_key}"
+                    auto_loader_config[full_key] = str(nested_value)
+            else:
+                auto_loader_config[key] = str(value)
+
+        return auto_loader_config
+
+    @staticmethod
+    def add_unity_catalog_metadata(
+        df: DataFrame,
+        catalog: Optional[str] = None,
+        schema: Optional[str] = None,
+        table_name: Optional[str] = None,
+        column_comments: Optional[Dict[str, str]] = None,
+        tags: Optional[Dict[str, str]] = None
+    ) -> DataFrame:
+        """
+        Add Unity Catalog metadata to a DataFrame.
+
+        Args:
+            df: The input DataFrame
+            catalog: Optional catalog name
+            schema: Optional schema name
+            table_name: Optional table name
+            column_comments: Optional dictionary of column comments
+            tags: Optional dictionary of Unity Catalog tags
+
+        Returns:
+            DataFrame with Unity Catalog metadata
+
+        Example:
+            df = DLTIntegration.add_unity_catalog_metadata(
+                df,
+                catalog="main",
+                schema="bronze",
+                table_name="raw_data",
+                column_comments={"id": "Unique identifier"},
+                tags={"sensitivity": "public"}
+            )
+        """
+        if catalog and schema and table_name:
+            dlt.table_property("target", f"{catalog}.{schema}.{table_name}")
+
+        if column_comments:
+            for column, comment in column_comments.items():
+                if column in df.columns:
+                    dlt.table_property(f"column_comment.{column}", comment)
+
+        if tags:
+            for key, value in tags.items():
+                dlt.table_property(f"tag.{key}", value)
+
+        return df
 
     @staticmethod
     def add_expectations(df: DataFrame, expectations: List[Dict[str, Any]]) -> DataFrame:

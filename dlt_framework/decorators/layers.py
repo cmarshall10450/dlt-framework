@@ -2,237 +2,388 @@
 
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, TypeVar, Union, cast
+from typing import Any, Callable, Dict, List, Optional, TypeVar, Union, cast
 
 from pyspark.sql import DataFrame
+import pyspark.sql.functions as F
 
-from .base import medallion
+from ..core.config import (
+    BronzeConfig,
+    ConfigurationManager,
+    Layer,
+    TableConfig,
+)
+from ..core.dlt_integration import DLTIntegration
 from ..core.registry import DecoratorRegistry
+from ..validation.gdpr import GDPRValidator, GDPRField
+from .base import medallion
 
-F = TypeVar("F", bound=Callable[..., DataFrame])
+T = TypeVar("T", bound=Callable[..., DataFrame])
+
+
+def _add_column_tags(dlt_integration: DLTIntegration, column_name: str, tags: Dict[str, str]) -> None:
+    """Helper function to add tags to a column."""
+    for tag_name, tag_value in tags.items():
+        dlt_integration.add_column_tag(column_name, tag_name, tag_value)
 
 
 def bronze(
     config_path: Optional[Union[str, Path]] = None,
-    expectations: Optional[list[Dict[str, Any]]] = None,
-    metrics: Optional[list[Dict[str, Any]]] = None,
-    table_properties: Optional[Dict[str, Any]] = None,
-    comment: Optional[str] = None,
+    source: Optional[Dict[str, Any]] = None,
+    table: Optional[Dict[str, Any]] = None,
+    expectations: Optional[List[Dict[str, Any]]] = None,
+    metrics: Optional[List[Dict[str, Any]]] = None,
+    pii_detection: bool = True,
     **options: Any,
-) -> Callable[[F], F]:
+) -> Callable[[T], T]:
     """
     Bronze layer decorator for raw data ingestion and validation.
 
-    This decorator is specifically designed for bronze layer tables which focus on:
-    - Raw data ingestion
-    - Schema validation
-    - Data quality checks
-    - Invalid record quarantining
-    - Source metadata preservation
-
     Args:
-        config_path: Optional path to a YAML configuration file
-        expectations: Optional list of DLT expectations
-        metrics: Optional list of DLT quality metrics
-        table_properties: Optional dictionary of table properties
-        comment: Optional table comment
-        **options: Additional configuration options that override file-based config
-
-    Returns:
-        Decorated function that returns a DataFrame
+        config_path: Optional path to configuration file
+        source: Optional source configuration (Auto Loader or JDBC)
+        table: Optional Unity Catalog table configuration
+        expectations: Optional list of data quality expectations
+        metrics: Optional list of quality metrics
+        pii_detection: Whether to perform PII detection (default: True)
+        **options: Additional configuration options
 
     Example:
         @bronze(
-            expectations=[{"name": "valid_id", "constraint": "id IS NOT NULL"}],
-            metrics=[{"name": "null_count", "value": "COUNT(*) WHERE id IS NULL"}]
+            source={
+                "type": "auto_loader",
+                "path": "s3://bucket/raw",
+                "format": "cloudFiles",
+                "options": {"cloudFiles.format": "json"}
+            },
+            table={
+                "name": "raw_data",
+                "catalog": "main",
+                "schema": "bronze",
+                "tags": {"sensitivity": "public"}
+            }
         )
         def ingest_raw_data() -> DataFrame:
-            return spark.read.format("json").load("/path/to/data")
+            # Function implementation
+            pass
     """
-    def decorator(func: F) -> F:
-        # Get registry instance
-        registry = DecoratorRegistry()
-        
-        # Register this decorator with type information
-        decorator_name = f"bronze_{func.__name__}"
-        registry.register(
-            decorator_name,
-            bronze,
-            metadata={
-                "layer": "bronze",
-                "expectations": expectations or [],
-                "metrics": metrics or [],
-                "table_properties": table_properties or {},
-                "comment": comment,
-                "options": options,
-            },
-            decorator_type="layer"
-        )
-        
-        # Apply the base medallion decorator
-        return cast(
-            F,
-            medallion(
+    def decorator(func: T) -> T:
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> DataFrame:
+            # Load configuration
+            config_manager = ConfigurationManager()
+            if config_path:
+                config = config_manager.load_config(config_path, layer=Layer.BRONZE)
+            else:
+                # Create config from parameters
+                config_dict = {
+                    "source": source or {},
+                    "table": table or {},
+                    "version": "1.0"
+                }
+                if expectations:
+                    config_dict["table"]["expectations"] = expectations
+                if metrics:
+                    config_dict["table"]["metrics"] = metrics
+                config = BronzeConfig(**config_dict)
+
+            # Get DLT integration instance
+            dlt_integration = DLTIntegration()
+
+            # Configure source if using Auto Loader
+            if config.source.type == "auto_loader":
+                source_config = dlt_integration.configure_auto_loader(
+                    source_path=config.source.path,
+                    format=config.source.format,
+                    **config.source.options
+                )
+                # Add source config to table properties
+                config.table.properties.update(source_config)
+
+            # Apply base medallion decorator
+            decorated_func = medallion(
                 layer="bronze",
                 config_path=config_path,
-                expectations=expectations,
-                metrics=metrics,
-                table_properties=table_properties,
-                comment=comment,
+                expectations=config.table.expectations,
+                metrics=config.table.metrics,
+                table_properties=config.table.properties,
                 **options
             )(func)
-        )
+
+            # Get the DataFrame from the decorated function
+            df = decorated_func(*args, **kwargs)
+
+            # Perform PII detection if enabled
+            if pii_detection:
+                gdpr_validator = GDPRValidator([])  # Empty field list for detection only
+                pii_columns = gdpr_validator.detect_pii(df)
+                
+                # Add PII detection results as table properties
+                pii_properties = {
+                    "pii_columns": ",".join(
+                        f"{col}:{pii_type}" 
+                        for pii_type, cols in pii_columns.items() 
+                        for col in cols
+                    )
+                }
+                dlt_integration.apply_table_properties(pii_properties)
+                
+                # Add column-level tags for PII detection
+                for pii_type, columns in pii_columns.items():
+                    for column in columns:
+                        _add_column_tags(dlt_integration, column, {
+                            "pii": "true",
+                            "pii_type": pii_type,
+                            "pii_status": "detected",
+                            "layer": "bronze",
+                            "detection_timestamp": "CURRENT_TIMESTAMP"
+                        })
+                
+                # Tag non-PII columns explicitly
+                all_pii_columns = {
+                    col for cols in pii_columns.values() 
+                    for col in cols
+                }
+                for column in df.columns:
+                    if column not in all_pii_columns:
+                        _add_column_tags(dlt_integration, column, {
+                            "pii": "false",
+                            "layer": "bronze"
+                        })
+
+            return df
+
+        return cast(T, wrapper)
+
     return decorator
 
 
 def silver(
     config_path: Optional[Union[str, Path]] = None,
-    expectations: Optional[list[Dict[str, Any]]] = None,
-    metrics: Optional[list[Dict[str, Any]]] = None,
-    table_properties: Optional[Dict[str, Any]] = None,
-    comment: Optional[str] = None,
+    table: Optional[Dict[str, Any]] = None,
+    expectations: Optional[List[Dict[str, Any]]] = None,
+    metrics: Optional[List[Dict[str, Any]]] = None,
+    masking_enabled: bool = True,
+    masking_overrides: Optional[Dict[str, str]] = None,
     **options: Any,
-) -> Callable[[F], F]:
+) -> Callable[[T], T]:
     """
     Silver layer decorator for data normalization and cleansing.
 
-    This decorator is specifically designed for silver layer tables which focus on:
-    - Data normalization and standardization
-    - Deduplication
-    - Data type enforcement
-    - Business rule validation
-    - Slowly Changing Dimension (SCD) handling
-    - Change Data Capture (CDC) processing
-
     Args:
-        config_path: Optional path to a YAML configuration file
-        expectations: Optional list of DLT expectations
-        metrics: Optional list of DLT quality metrics
-        table_properties: Optional dictionary of table properties
-        comment: Optional table comment
-        **options: Additional configuration options that override file-based config
-
-    Returns:
-        Decorated function that returns a DataFrame
+        config_path: Optional path to configuration file
+        table: Optional Unity Catalog table configuration
+        expectations: Optional list of data quality expectations
+        metrics: Optional list of quality metrics
+        masking_enabled: Whether to apply PII masking (default: True)
+        masking_overrides: Optional dictionary to override default masking strategies
+                         for specific columns, e.g. {"email": "hash", "phone": "redact"}
+        **options: Additional configuration options
 
     Example:
         @silver(
-            expectations=[
-                {"name": "valid_email", "constraint": "email RLIKE '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}$'"}
-            ]
-        )
-        def normalize_customer_data() -> DataFrame:
-            return spark.table("LIVE.bronze_customers").transform(normalize_email)
-    """
-    def decorator(func: F) -> F:
-        # Get registry instance
-        registry = DecoratorRegistry()
-        
-        # Register this decorator with type information
-        decorator_name = f"silver_{func.__name__}"
-        registry.register(
-            decorator_name,
-            silver,
-            metadata={
-                "layer": "silver",
-                "expectations": expectations or [],
-                "metrics": metrics or [],
-                "table_properties": table_properties or {},
-                "comment": comment,
-                "options": options,
+            table={
+                "name": "cleaned_data",
+                "catalog": "main",
+                "schema": "silver",
+                "tags": {"data_quality": "validated"}
             },
-            decorator_type="layer"
+            masking_overrides={
+                "email": "hash",  # Override default masking for email
+                "phone": "redact"  # Override default masking for phone
+            }
         )
-        
-        # Apply the base medallion decorator
-        return cast(
-            F,
-            medallion(
+        def clean_data() -> DataFrame:
+            return spark.table("LIVE.bronze.raw_data").transform(normalize_data)
+    """
+    def decorator(func: T) -> T:
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> DataFrame:
+            # Load configuration
+            config_manager = ConfigurationManager()
+            if config_path:
+                config = config_manager.load_config(config_path)
+            else:
+                # Create config from parameters
+                config_dict = {
+                    "table": table or {},
+                    "version": "1.0"
+                }
+                if expectations:
+                    config_dict["table"]["expectations"] = expectations
+                if metrics:
+                    config_dict["table"]["metrics"] = metrics
+                config = TableConfig(**config_dict)
+
+            # Apply base medallion decorator
+            decorated_func = medallion(
                 layer="silver",
                 config_path=config_path,
-                expectations=expectations,
-                metrics=metrics,
-                table_properties=table_properties,
-                comment=comment,
+                expectations=config.table.expectations,
+                metrics=config.table.metrics,
+                table_properties=config.table.properties,
                 **options
             )(func)
-        )
+
+            # Get the DataFrame from the decorated function
+            df = decorated_func(*args, **kwargs)
+
+            # Apply PII masking if enabled
+            if masking_enabled:
+                # Get PII detection results from bronze layer properties
+                dlt_integration = DLTIntegration()
+                bronze_properties = dlt_integration.get_table_properties(df)
+                pii_columns_str = bronze_properties.get("pii_columns", "")
+                
+                if pii_columns_str:
+                    # Parse PII columns from bronze layer
+                    pii_fields = []
+                    for col_info in pii_columns_str.split(","):
+                        col, pii_type = col_info.split(":")
+                        # Create GDPRField with default or overridden masking strategy
+                        masking_strategy = None
+                        if masking_overrides and col in masking_overrides:
+                            masking_strategy = masking_overrides[col]
+                        
+                        pii_fields.append(GDPRField(
+                            name=col,
+                            pii_type=pii_type,
+                            masking_strategy=masking_strategy
+                        ))
+                    
+                    # Apply masking based on detected fields
+                    if pii_fields:
+                        gdpr_validator = GDPRValidator(pii_fields)
+                        df = gdpr_validator.mask_pii(df)
+                        
+                        # Add masking metadata
+                        masking_properties = {
+                            "masked_columns": pii_columns_str,
+                            "masking_timestamp": "CURRENT_TIMESTAMP",
+                            "masking_overrides": str(masking_overrides) if masking_overrides else ""
+                        }
+                        dlt_integration.apply_table_properties(masking_properties)
+                        
+                        # Update column-level tags for masked PII
+                        for field in pii_fields:
+                            _add_column_tags(dlt_integration, field.name, {
+                                "pii": "true",
+                                "pii_type": field.pii_type,
+                                "pii_status": "masked",
+                                "masking_strategy": field.masking_strategy or "default",
+                                "layer": "silver",
+                                "masking_timestamp": "CURRENT_TIMESTAMP"
+                            })
+                
+                # Tag non-PII columns
+                pii_column_names = {field.name for field in pii_fields}
+                for column in df.columns:
+                    if column not in pii_column_names:
+                        _add_column_tags(dlt_integration, column, {
+                            "pii": "false",
+                            "layer": "silver"
+                        })
+
+            return df
+
+        return cast(T, wrapper)
+
     return decorator
 
 
 def gold(
     config_path: Optional[Union[str, Path]] = None,
-    expectations: Optional[list[Dict[str, Any]]] = None,
-    metrics: Optional[list[Dict[str, Any]]] = None,
-    table_properties: Optional[Dict[str, Any]] = None,
-    comment: Optional[str] = None,
+    table: Optional[Dict[str, Any]] = None,
+    expectations: Optional[List[Dict[str, Any]]] = None,
+    metrics: Optional[List[Dict[str, Any]]] = None,
+    verify_pii_masking: bool = True,
     **options: Any,
-) -> Callable[[F], F]:
+) -> Callable[[T], T]:
     """
     Gold layer decorator for business-level aggregations and metrics.
 
-    This decorator is specifically designed for gold layer tables which focus on:
-    - Business metrics computation
-    - Dimensional modeling
-    - Aggregations and rollups
-    - Reference data management
-    - Business rule enforcement
-    - Data mart preparation
-
     Args:
-        config_path: Optional path to a YAML configuration file
-        expectations: Optional list of DLT expectations
-        metrics: Optional list of DLT quality metrics
-        table_properties: Optional dictionary of table properties
-        comment: Optional table comment
-        **options: Additional configuration options that override file-based config
-
-    Returns:
-        Decorated function that returns a DataFrame
+        config_path: Optional path to configuration file
+        table: Optional Unity Catalog table configuration
+        expectations: Optional list of data quality expectations
+        metrics: Optional list of quality metrics
+        verify_pii_masking: Whether to verify PII masking (default: True)
+        **options: Additional configuration options
 
     Example:
         @gold(
-            expectations=[
-                {"name": "total_check", "constraint": "total_amount >= 0"}
-            ],
-            metrics=[
-                {"name": "daily_sales", "value": "SUM(total_amount)"}
-            ]
+            table={
+                "name": "customer_metrics",
+                "catalog": "main",
+                "schema": "gold",
+                "tags": {"domain": "customer"}
+            }
         )
-        def calculate_daily_sales() -> DataFrame:
-            return spark.table("LIVE.silver_orders").groupBy("date").sum("amount")
+        def calculate_metrics() -> DataFrame:
+            return spark.table("LIVE.silver.cleaned_data").groupBy("date").agg(...)
     """
-    def decorator(func: F) -> F:
-        # Get registry instance
-        registry = DecoratorRegistry()
-        
-        # Register this decorator with type information
-        decorator_name = f"gold_{func.__name__}"
-        registry.register(
-            decorator_name,
-            gold,
-            metadata={
-                "layer": "gold",
-                "expectations": expectations or [],
-                "metrics": metrics or [],
-                "table_properties": table_properties or {},
-                "comment": comment,
-                "options": options,
-            },
-            decorator_type="layer"
-        )
-        
-        # Apply the base medallion decorator
-        return cast(
-            F,
-            medallion(
+    def decorator(func: T) -> T:
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> DataFrame:
+            # Load configuration
+            config_manager = ConfigurationManager()
+            if config_path:
+                config = config_manager.load_config(config_path)
+            else:
+                # Create config from parameters
+                config_dict = {
+                    "table": table or {},
+                    "version": "1.0"
+                }
+                if expectations:
+                    config_dict["table"]["expectations"] = expectations
+                if metrics:
+                    config_dict["table"]["metrics"] = metrics
+                config = TableConfig(**config_dict)
+
+            # Apply base medallion decorator
+            decorated_func = medallion(
                 layer="gold",
                 config_path=config_path,
-                expectations=expectations,
-                metrics=metrics,
-                table_properties=table_properties,
-                comment=comment,
+                expectations=config.table.expectations,
+                metrics=config.table.metrics,
+                table_properties=config.table.properties,
                 **options
             )(func)
-        )
+
+            # Get the DataFrame from the decorated function
+            df = decorated_func(*args, **kwargs)
+
+            # Verify PII masking if enabled
+            if verify_pii_masking:
+                # Create an empty validator just for detection
+                gdpr_validator = GDPRValidator([])
+                pii_columns = gdpr_validator.detect_pii(df)
+                
+                if any(cols for cols in pii_columns.values()):
+                    # Found unmasked PII data in gold layer
+                    raise ValueError(
+                        "Detected unmasked PII data in gold layer. Ensure all PII is "
+                        "properly masked in the silver layer. Detected columns: " +
+                        ", ".join(
+                            f"{col} ({pii_type})"
+                            for pii_type, cols in pii_columns.items()
+                            for col in cols
+                        )
+                    )
+                
+                # Add column-level tags for verified columns
+                dlt_integration = DLTIntegration()
+                for column in df.columns:
+                    _add_column_tags(dlt_integration, column, {
+                        "pii": "false",
+                        "pii_status": "verified",
+                        "layer": "gold",
+                        "verification_timestamp": "CURRENT_TIMESTAMP"
+                    })
+
+            return df
+
+        return cast(T, wrapper)
+
     return decorator 

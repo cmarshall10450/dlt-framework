@@ -11,6 +11,7 @@ from ..core.config import ConfigurationManager
 from ..core.dlt_integration import DLTIntegration
 from ..core.exceptions import DecoratorError
 from ..core.registry import DecoratorRegistry
+from ..metadata.batch import BatchManager, SourceMetadata
 from ..utils.spark import get_spark_session
 
 F = TypeVar("F", bound=Callable[..., DataFrame])
@@ -23,6 +24,8 @@ def medallion(
     metrics: Optional[List[Dict[str, Any]]] = None,
     table_properties: Optional[Dict[str, Any]] = None,
     comment: Optional[str] = None,
+    source_metadata: Optional[SourceMetadata] = None,
+    batch_id: Optional[str] = None,
     **options: Any,
 ) -> Callable[[F], F]:
     """
@@ -35,6 +38,7 @@ def medallion(
     - Decorator dependency resolution
     - DLT expectations and quality metrics
     - Table properties and comments
+    - Batch and source metadata tracking
 
     Args:
         layer: The layer this table belongs to (bronze, silver, or gold)
@@ -43,6 +47,8 @@ def medallion(
         metrics: Optional list of DLT quality metrics
         table_properties: Optional dictionary of table properties
         comment: Optional table comment
+        source_metadata: Optional metadata about the source data
+        batch_id: Optional batch ID for tracking (uses DLT pipeline run ID if not provided)
         **options: Additional configuration options that override file-based config
 
     Returns:
@@ -67,6 +73,8 @@ def medallion(
                 "metrics": metrics or [],
                 "table_properties": table_properties or {},
                 "comment": comment,
+                "source_metadata": source_metadata,
+                "batch_id": batch_id,
             },
         )
         
@@ -89,6 +97,16 @@ def medallion(
             
             # Execute the decorated function
             result = func(*args, **kwargs)
+            
+            # Apply batch and source metadata if provided or if this is a bronze layer
+            if source_metadata or layer == "bronze":
+                # Use provided source metadata or create default for bronze layer
+                meta = source_metadata or SourceMetadata(
+                    source_type="table",
+                    source_path=func.__name__,  # Use function name as default source path
+                    format="delta"  # Default format for DLT tables
+                )
+                result = BatchManager.apply_batch_metadata(result, meta, batch_id)
             
             # Apply DLT expectations and metrics
             if expectations:
