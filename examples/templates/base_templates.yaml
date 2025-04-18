@@ -1,0 +1,133 @@
+# Base templates for common data quality patterns
+- name: base_delta_table
+  description: Base template for Delta Lake tables with optimizations
+  table:
+    properties:
+      delta.autoOptimize.optimizeWrite: "true"
+      delta.autoOptimize.autoCompact: "true"
+    expectations:
+      - name: row_count_not_zero
+        constraint: "COUNT(*) > 0"
+        severity: "warning"
+        description: "Ensure table is not empty"
+    metrics:
+      - name: row_count
+        value: "COUNT(*)"
+        description: "Total number of rows"
+      - name: last_updated
+        value: "MAX(updated_at)"
+        description: "Last update timestamp"
+
+- name: base_bronze
+  description: Base template for bronze layer tables
+  extends: base_delta_table
+  table:
+    layer: bronze
+    properties:
+      delta.appendOnly: "true"
+    expectations:
+      - name: valid_timestamp
+        constraint: "ingestion_timestamp IS NOT NULL"
+        severity: "error"
+        description: "Ensure ingestion timestamp is present"
+    metrics:
+      - name: null_count
+        value: "COUNT(*) - COUNT(*) FILTER (WHERE ingestion_timestamp IS NOT NULL)"
+        description: "Count of rows with null ingestion timestamp"
+
+- name: base_silver
+  description: Base template for silver layer tables
+  extends: base_delta_table
+  table:
+    layer: silver
+    expectations:
+      - name: no_duplicates
+        constraint: "COUNT(*) = COUNT(DISTINCT id)"
+        severity: "error"
+        description: "Ensure no duplicate records"
+      - name: valid_id
+        constraint: "id IS NOT NULL"
+        severity: "error"
+        description: "Ensure ID is not null"
+    metrics:
+      - name: duplicate_count
+        value: "COUNT(*) - COUNT(DISTINCT id)"
+        description: "Count of duplicate records"
+      - name: null_id_count
+        value: "COUNT(*) FILTER (WHERE id IS NULL)"
+        description: "Count of records with null ID"
+
+- name: base_gold
+  description: Base template for gold layer tables
+  extends: base_delta_table
+  table:
+    layer: gold
+    expectations:
+      - name: valid_metrics
+        constraint: "metric_value IS NOT NULL AND metric_value >= 0"
+        severity: "error"
+        description: "Ensure metrics are valid"
+    metrics:
+      - name: total_value
+        value: "SUM(metric_value)"
+        description: "Total metric value"
+      - name: avg_value
+        value: "AVG(metric_value)"
+        description: "Average metric value"
+
+- name: time_series
+  description: Template for time series data
+  table:
+    expectations:
+      - name: valid_timestamp
+        constraint: "timestamp IS NOT NULL"
+        severity: "error"
+        description: "Ensure timestamp is present"
+      - name: valid_value
+        constraint: "value IS NOT NULL"
+        severity: "error"
+        description: "Ensure value is present"
+      - name: chronological_order
+        constraint: "timestamp >= LAG(timestamp) OVER (ORDER BY timestamp)"
+        severity: "warning"
+        description: "Ensure timestamps are in chronological order"
+    metrics:
+      - name: min_timestamp
+        value: "MIN(timestamp)"
+        description: "Earliest timestamp"
+      - name: max_timestamp
+        value: "MAX(timestamp)"
+        description: "Latest timestamp"
+      - name: value_stats
+        value: >
+          STRUCT(
+            MIN(value) as min_value,
+            MAX(value) as max_value,
+            AVG(value) as avg_value,
+            STDDEV(value) as std_dev
+          )
+        description: "Statistical summary of values"
+
+- name: dimension_table
+  description: Template for dimension tables
+  table:
+    expectations:
+      - name: valid_surrogate_key
+        constraint: "id IS NOT NULL"
+        severity: "error"
+        description: "Ensure surrogate key is present"
+      - name: unique_surrogate_key
+        constraint: "COUNT(*) = COUNT(DISTINCT id)"
+        severity: "error"
+        description: "Ensure surrogate key is unique"
+      - name: valid_effective_date
+        constraint: "effective_date IS NOT NULL"
+        severity: "error"
+        description: "Ensure effective date is present"
+    metrics:
+      - name: active_records
+        value: "COUNT(*) FILTER (WHERE current_flag = true)"
+        description: "Count of active records"
+      - name: total_records
+        value: "COUNT(*)"
+        description: "Total number of records" 
