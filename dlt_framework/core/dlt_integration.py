@@ -86,30 +86,37 @@ class DLTIntegration:
 
         Returns:
             DataFrame with Unity Catalog metadata
-
-        Example:
-            df = DLTIntegration.add_unity_catalog_metadata(
-                df,
-                catalog="main",
-                schema="bronze",
-                table_name="raw_data",
-                column_comments={"id": "Unique identifier"},
-                tags={"sensitivity": "public"}
-            )
         """
+        properties = {}
+        
         if catalog and schema and table_name:
-            dlt.table_property("target", f"{catalog}.{schema}.{table_name}")
+            properties["target"] = f"{catalog}.{schema}.{table_name}"
 
         if column_comments:
             for column, comment in column_comments.items():
                 if column in df.columns:
-                    dlt.table_property(f"column_comment.{column}", comment)
+                    properties[f"column_comment.{column}"] = comment
 
         if tags:
             for key, value in tags.items():
-                dlt.table_property(f"tag.{key}", value)
+                properties[f"tag.{key}"] = value
+
+        if properties:
+            dlt.properties.update(properties)
 
         return df
+
+    @staticmethod
+    def add_column_tag(column_name: str, tag_name: str, tag_value: str) -> None:
+        """
+        Add a tag to a specific column.
+
+        Args:
+            column_name: Name of the column
+            tag_name: Name of the tag
+            tag_value: Value of the tag
+        """
+        dlt.properties[f"column_tag.{column_name}.{tag_name}"] = tag_value
 
     @staticmethod
     def add_expectations(df: DataFrame, expectations: List[Dict[str, Any]]) -> DataFrame:
@@ -200,8 +207,7 @@ class DLTIntegration:
         if not properties:
             return
 
-        for key, value in properties.items():
-            dlt.table_property(key, str(value))
+        dlt.properties.update({key: str(value) for key, value in properties.items()})
 
     @staticmethod
     def set_table_comment(comment: Optional[str] = None) -> None:
@@ -212,4 +218,4 @@ class DLTIntegration:
             comment: Table comment string
         """
         if comment:
-            dlt.table_property("comment", comment) 
+            dlt.properties["comment"] = comment 
