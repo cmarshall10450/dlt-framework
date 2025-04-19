@@ -2,25 +2,15 @@
 
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, TypeVar, Union, cast
+from typing import Any, Callable, Optional, TypeVar, Union, cast
 
 from pyspark.sql import DataFrame
-import pyspark.sql.functions as F
 
 from ..core.config_manager import ConfigurationManager
-from ..core.config_models import (
-    BronzeConfig,
-    SilverConfig,
-    GoldConfig,
-    Expectation,
-    Metric,
-    MonitoringConfig,
-    GovernanceConfig,
-)
+from ..core.config_models import BronzeConfig, SilverConfig, GoldConfig
 from ..core.dlt_integration import DLTIntegration
 from ..core.registry import DecoratorRegistry
 from ..validation.gdpr import GDPRValidator, GDPRField
-from .base import medallion
 
 T = TypeVar("T", bound=Callable[..., DataFrame])
 
@@ -46,17 +36,30 @@ def bronze(
     Example:
         >>> @dlt.table
         >>> @bronze(
-        ...     expectations=[
-        ...         Expectation(name="valid_id", constraint="id IS NOT NULL"),
-        ...         Expectation(name="valid_email", constraint="email LIKE '%@%'")
-        ...     ],
-        ...     pii_detection=True,
-        ...     metrics=["record_count", "null_count"]
+        ...     config=BronzeConfig(
+        ...         validate=[
+        ...             Expectation(name="valid_id", constraint="id IS NOT NULL"),
+        ...             Expectation(name="valid_email", constraint="email LIKE '%@%'")
+        ...         ],
+        ...         pii_detection=True,
+        ...         metrics=["record_count", "null_count"]
+        ...     )
         ... )
         >>> def raw_transactions():
         ...     return spark.read.table("raw_transactions")
     """
     def decorator(func: T) -> T:
+        # Get the function name for registration
+        func_name = func.__name__
+
+        # Register with the decorator registry
+        registry = DecoratorRegistry()
+        registry.register(
+            name=f"bronze_{func_name}",
+            layer="bronze",
+            decorator_type="layer"
+        )
+
         @wraps(func)
         def wrapper(*args: Any, **inner_kwargs: Any) -> DataFrame:
             # Resolve configuration
@@ -67,14 +70,15 @@ def bronze(
                 **kwargs
             )
 
-            # Apply medallion decorator with resolved configuration
-            decorated_func = medallion(
-                layer="bronze",
-                config=config_obj
-            )(func)
+            # Get the DataFrame from the function
+            df = func(*args, **inner_kwargs)
 
-            # Get the DataFrame from the decorated function
-            df = decorated_func(*args, **inner_kwargs)
+            # Apply expectations and metrics if configured
+            dlt_integration = DLTIntegration()
+            if config_obj.validate:
+                df = dlt_integration.add_expectations(df, config_obj.validate)
+            if config_obj.metrics:
+                df = dlt_integration.add_quality_metrics(df, config_obj.metrics)
 
             # Perform PII detection if enabled
             if config_obj.pii_detection:
@@ -109,15 +113,27 @@ def silver(
     Example:
         >>> @dlt.table
         >>> @silver(
-        ...     masking_enabled=True,
-        ...     masking_overrides={"email": "hash"},
-        ...     scd_config=SCDConfig(type=2, key_columns=["id"]),
-        ...     expectations=ConfigurationManager.required_columns("id", "email")
+        ...     config=SilverConfig(
+        ...         masking_enabled=True,
+        ...         masking_overrides={"email": "hash"},
+        ...         validate=ConfigurationManager.required_columns("id", "email")
+        ...     )
         ... )
         >>> def cleaned_transactions():
         ...     return spark.read.table("raw_transactions")
     """
     def decorator(func: T) -> T:
+        # Get the function name for registration
+        func_name = func.__name__
+
+        # Register with the decorator registry
+        registry = DecoratorRegistry()
+        registry.register(
+            name=f"silver_{func_name}",
+            layer="silver",
+            decorator_type="layer"
+        )
+
         @wraps(func)
         def wrapper(*args: Any, **inner_kwargs: Any) -> DataFrame:
             # Resolve configuration
@@ -128,14 +144,15 @@ def silver(
                 **kwargs
             )
 
-            # Apply medallion decorator with resolved configuration
-            decorated_func = medallion(
-                layer="silver",
-                config=config_obj
-            )(func)
+            # Get the DataFrame from the function
+            df = func(*args, **inner_kwargs)
 
-            # Get the DataFrame from the decorated function
-            df = decorated_func(*args, **inner_kwargs)
+            # Apply expectations and metrics if configured
+            dlt_integration = DLTIntegration()
+            if config_obj.validate:
+                df = dlt_integration.add_expectations(df, config_obj.validate)
+            if config_obj.metrics:
+                df = dlt_integration.add_quality_metrics(df, config_obj.metrics)
 
             # Apply PII masking if enabled
             if config_obj.masking_enabled:
@@ -182,19 +199,32 @@ def gold(
     Example:
         >>> @dlt.table
         >>> @gold(
-        ...     verify_pii_masking=True,
-        ...     expectations=ConfigurationManager.reference_check({
-        ...         "customer_id": "dim_customers.id"
-        ...     }),
-        ...     monitoring=ConfigurationManager.monitor(
-        ...         metrics=["daily_revenue", "customer_count"],
-        ...         alerts=["revenue_drop_alert"]
+        ...     config=GoldConfig(
+        ...         verify_pii_masking=True,
+        ...         validate=ConfigurationManager.reference_check({
+        ...             "customer_id": "dim_customers.id"
+        ...         }),
+        ...         monitoring=ConfigurationManager.monitor(
+        ...             metrics=["daily_revenue", "customer_count"],
+        ...             alerts=["revenue_drop_alert"]
+        ...         )
         ...     )
         ... )
         >>> def customer_metrics():
         ...     return spark.read.table("cleaned_transactions")
     """
     def decorator(func: T) -> T:
+        # Get the function name for registration
+        func_name = func.__name__
+
+        # Register with the decorator registry
+        registry = DecoratorRegistry()
+        registry.register(
+            name=f"gold_{func_name}",
+            layer="gold",
+            decorator_type="layer"
+        )
+
         @wraps(func)
         def wrapper(*args: Any, **inner_kwargs: Any) -> DataFrame:
             # Resolve configuration
@@ -205,14 +235,15 @@ def gold(
                 **kwargs
             )
 
-            # Apply medallion decorator with resolved configuration
-            decorated_func = medallion(
-                layer="gold",
-                config=config_obj
-            )(func)
+            # Get the DataFrame from the function
+            df = func(*args, **inner_kwargs)
 
-            # Get the DataFrame from the decorated function
-            df = decorated_func(*args, **inner_kwargs)
+            # Apply expectations and metrics if configured
+            dlt_integration = DLTIntegration()
+            if config_obj.validate:
+                df = dlt_integration.add_expectations(df, config_obj.validate)
+            if config_obj.metrics:
+                df = dlt_integration.add_quality_metrics(df, config_obj.metrics)
 
             # Verify PII masking if enabled
             if config_obj.verify_pii_masking:
