@@ -1,0 +1,72 @@
+# Global monitoring and governance settings
+monitoring:
+  metrics:
+    - record_count
+    - null_count
+    - duplicate_count
+  alerts:
+    - data_quality_alert
+    - latency_alert
+  dashboard: "medallion_metrics"
+
+governance:
+  owner: "data_engineering"
+  steward: "data_quality"
+  classification:
+    security_level: "restricted"
+    data_domain: "transactions"
+  retention: "365 days"
+  tags:
+    environment: "production"
+    pipeline: "transactions"
+
+# Layer-specific configurations
+bronze:
+  quarantine: true
+  pii_detection: true
+  schema_evolution: true
+  validate:
+    - name: "valid_transaction_id"
+      constraint: "transaction_id IS NOT NULL"
+      action: "quarantine"
+    - name: "valid_amount"
+      constraint: "amount > 0"
+      action: "quarantine"
+  metrics:
+    - "raw_record_count"
+    - name: "invalid_record_count"
+      value: "COUNT(*) WHERE transaction_id IS NULL OR amount <= 0"
+
+silver:
+  deduplication: true
+  scd:
+    type: 2
+    key_columns: ["transaction_id"]
+    track_columns: ["amount", "status"]
+    timestamp_col: "updated_at"
+    current_flag: "is_current"
+  normalization:
+    status: "UPPER(status)"
+    amount: "ROUND(amount, 2)"
+  validate:
+    - name: "unique_transaction"
+      constraint: "COUNT(*) OVER (PARTITION BY transaction_id) = 1"
+      action: "fail"
+    - name: "valid_status"
+      constraint: "status IN ('PENDING', 'COMPLETED', 'FAILED')"
+      action: "quarantine"
+
+gold:
+  references:
+    customer_id: "dim_customers.id"
+    product_id: "dim_products.id"
+  dimensions: ["customer", "product", "date"]
+  validate:
+    - name: "complete_dimensions"
+      constraint: "customer_id IS NOT NULL AND product_id IS NOT NULL"
+      action: "fail"
+  metrics:
+    - name: "daily_revenue"
+      value: "SUM(amount) GROUP BY date"
+    - name: "customer_count"
+      value: "COUNT(DISTINCT customer_id)" 

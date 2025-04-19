@@ -65,58 +65,71 @@ class DLTIntegration:
         return auto_loader_config
 
     @staticmethod
-    def add_unity_catalog_metadata(
-        df: DataFrame,
+    def prepare_table_properties(
         catalog: Optional[str] = None,
         schema: Optional[str] = None,
         table_name: Optional[str] = None,
         column_comments: Optional[Dict[str, str]] = None,
-        tags: Optional[Dict[str, str]] = None
-    ) -> DataFrame:
+        tags: Optional[Dict[str, str]] = None,
+        comment: Optional[str] = None,
+        properties: Optional[Dict[str, Any]] = None,
+        partition_cols: Optional[List[str]] = None,
+        cluster_by: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         """
-        Add Unity Catalog metadata to a DataFrame.
+        Prepare properties for @dlt.table decorator.
 
         Args:
-            df: The input DataFrame
             catalog: Optional catalog name
             schema: Optional schema name
             table_name: Optional table name
             column_comments: Optional dictionary of column comments
             tags: Optional dictionary of Unity Catalog tags
+            comment: Optional table comment
+            properties: Optional dictionary of additional table properties
+            partition_cols: Optional list of partition columns
+            cluster_by: Optional list of clustering columns
 
         Returns:
-            DataFrame with Unity Catalog metadata
+            Dictionary of properties for @dlt.table decorator
         """
-        properties = {}
-        
-        if catalog and schema and table_name:
-            properties["target"] = f"{catalog}.{schema}.{table_name}"
+        table_config = {}
 
+        # Set basic table properties
+        if table_name:
+            table_config["name"] = table_name
+        if comment:
+            table_config["comment"] = comment
+        if partition_cols:
+            table_config["partition_cols"] = partition_cols
+        if cluster_by:
+            table_config["cluster_by"] = cluster_by
+
+        # Prepare table properties
+        table_properties = {}
+
+        # Add Unity Catalog metadata
+        if catalog and schema:
+            table_properties["target"] = f"{catalog}.{schema}.{table_name}"
+
+        # Add column comments
         if column_comments:
             for column, comment in column_comments.items():
-                if column in df.columns:
-                    properties[f"column_comment.{column}"] = comment
+                table_properties[f"column_comment.{column}"] = comment
 
+        # Add tags
         if tags:
             for key, value in tags.items():
-                properties[f"tag.{key}"] = value
+                table_properties[f"tag.{key}"] = value
 
+        # Add additional properties
         if properties:
-            dlt.properties.update(properties)
+            table_properties.update({key: str(value) for key, value in properties.items()})
 
-        return df
+        if table_properties:
+            table_config["table_properties"] = table_properties
 
-    @staticmethod
-    def add_column_tag(column_name: str, tag_name: str, tag_value: str) -> None:
-        """
-        Add a tag to a specific column.
-
-        Args:
-            column_name: Name of the column
-            tag_name: Name of the tag
-            tag_value: Value of the tag
-        """
-        dlt.properties[f"column_tag.{column_name}.{tag_name}"] = tag_value
+        return table_config
 
     @staticmethod
     def add_expectations(df: DataFrame, expectations: List[Dict[str, Any]]) -> DataFrame:
@@ -187,35 +200,4 @@ class DLTIntegration:
 
             dlt.expect(df, name, condition)
 
-        return df
-
-    @staticmethod
-    def apply_table_properties(properties: Optional[Dict[str, Any]] = None) -> None:
-        """
-        Apply DLT table properties.
-
-        Args:
-            properties: Dictionary of table properties
-
-        Example properties:
-        {
-            "pipelines.reset": "false",
-            "delta.autoOptimize.optimizeWrite": "true",
-            "delta.autoOptimize.autoCompact": "true"
-        }
-        """
-        if not properties:
-            return
-
-        dlt.properties.update({key: str(value) for key, value in properties.items()})
-
-    @staticmethod
-    def set_table_comment(comment: Optional[str] = None) -> None:
-        """
-        Set the table comment.
-
-        Args:
-            comment: Table comment string
-        """
-        if comment:
-            dlt.properties["comment"] = comment 
+        return df 
