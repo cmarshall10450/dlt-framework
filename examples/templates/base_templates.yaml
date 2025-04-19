@@ -75,38 +75,39 @@
         value: "AVG(metric_value)"
         description: "Average metric value"
 
-- name: time_series
-  description: Template for time series data
-  table:
-    expectations:
-      - name: valid_timestamp
-        constraint: "timestamp IS NOT NULL"
-        severity: "error"
-        description: "Ensure timestamp is present"
-      - name: valid_value
-        constraint: "value IS NOT NULL"
-        severity: "error"
-        description: "Ensure value is present"
-      - name: chronological_order
-        constraint: "timestamp >= LAG(timestamp) OVER (ORDER BY timestamp)"
-        severity: "warning"
-        description: "Ensure timestamps are in chronological order"
-    metrics:
-      - name: min_timestamp
-        value: "MIN(timestamp)"
-        description: "Earliest timestamp"
-      - name: max_timestamp
-        value: "MAX(timestamp)"
-        description: "Latest timestamp"
-      - name: value_stats
-        value: >
-          STRUCT(
-            MIN(value) as min_value,
-            MAX(value) as max_value,
-            AVG(value) as avg_value,
-            STDDEV(value) as std_dev
-          )
-        description: "Statistical summary of values"
+# TODO: Implement time series template with statistical validation
+# - name: time_series
+#   description: Template for time series data
+#   table:
+#     expectations:
+#       - name: valid_timestamp
+#         constraint: "timestamp IS NOT NULL"
+#         severity: "error"
+#         description: "Ensure timestamp is present"
+#       - name: valid_value
+#         constraint: "value IS NOT NULL"
+#         severity: "error"
+#         description: "Ensure value is present"
+#       - name: chronological_order
+#         constraint: "timestamp >= LAG(timestamp) OVER (ORDER BY timestamp)"
+#         severity: "warning"
+#         description: "Ensure timestamps are in chronological order"
+#     metrics:
+#       - name: min_timestamp
+#         value: "MIN(timestamp)"
+#         description: "Earliest timestamp"
+#       - name: max_timestamp
+#         value: "MAX(timestamp)"
+#         description: "Latest timestamp"
+#       - name: value_stats
+#         value: >
+#           STRUCT(
+#             MIN(value) as min_value,
+#             MAX(value) as max_value,
+#             AVG(value) as avg_value,
+#             STDDEV(value) as std_dev
+#           )
+#         description: "Statistical summary of values"
 
 - name: dimension_table
   description: Template for dimension tables
