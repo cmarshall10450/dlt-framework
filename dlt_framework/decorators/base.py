@@ -72,9 +72,9 @@ def medallion(
         registry = DecoratorRegistry()
         
         # Register this decorator instance
-        registry.register_decorator(
+        registry.register(
             name=f"medallion_{func.__name__}",
-            func=func,
+            decorator=func,
             metadata={
                 "layer": layer,
                 "expectations": expectations or [],
@@ -84,7 +84,8 @@ def medallion(
                 "source_metadata": source_metadata,
                 "batch_id": batch_id,
                 "options": options
-            }
+            },
+            decorator_type="layer"
         )
         
         @functools.wraps(func)

@@ -14,12 +14,6 @@
 # MAGIC 
 # MAGIC ## Setup
 
-# COMMAND ----------
-
-# MAGIC %pip install /dbfs/FileStore/jars/dlt_framework-0.1.0-py3-none-any.whl
-
-# COMMAND ----------
-
 from datetime import datetime
 from typing import Dict, List
 
@@ -31,7 +25,7 @@ import pyspark.sql.functions as F
 from dlt_framework.decorators import bronze, silver, gold
 from dlt_framework.validation import SchemaValidator
 from dlt_framework.validation.rules import NumericRangeRule, RegexRule
-from dlt_framework.validation.gdpr import GDPRValidator, PIIField
+from dlt_framework.validation.gdpr import GDPRValidator, GDPRField
 from dlt_framework.validation.quarantine import QuarantineConfig, QuarantineManager
 
 # COMMAND ----------
@@ -71,6 +65,16 @@ def generate_sample_data() -> DataFrame:
 
 @dlt.table
 @bronze(
+    table={
+        "name": "raw_transactions",
+        "catalog": "main",  # Default catalog in Databricks
+        "schema_name": "default"  # Default schema
+    },
+    source={
+        "path": "/tmp/sample_data/transactions",  # Local path for sample data
+        "url": None,  # Not using external URL
+        "table": None  # Not reading from existing table
+    },
     expectations=[
         {"name": "valid_customer_id", "constraint": "customer_id IS NOT NULL"},
         {"name": "valid_amount", "constraint": "amount >= 0"}
@@ -78,11 +82,7 @@ def generate_sample_data() -> DataFrame:
     metrics=[
         {"name": "total_transactions", "value": "COUNT(*)"},
         {"name": "total_amount", "value": "SUM(amount)"}
-    ],
-    table_properties={
-        "delta.autoOptimize.optimizeWrite": "true",
-        "delta.autoOptimize.autoCompact": "true"
-    }
+    ]
 )
 def raw_transactions() -> DataFrame:
     """Ingest raw transaction data."""
@@ -166,9 +166,9 @@ def cleaned_transactions() -> DataFrame:
     
     # Set up GDPR validation
     pii_fields = {
-        "email": PIIField(pii_type="email", requires_consent=True),
-        "phone": PIIField(pii_type="phone", requires_consent=True),
-        "credit_card": PIIField(pii_type="credit_card", requires_consent=True)
+        "email": GDPRField(pii_type="email", requires_consent=True),
+        "phone": GDPRField(pii_type="phone", requires_consent=True),
+        "credit_card": GDPRField(pii_type="credit_card", requires_consent=True)
     }
     
     gdpr_validator = GDPRValidator(pii_fields)
