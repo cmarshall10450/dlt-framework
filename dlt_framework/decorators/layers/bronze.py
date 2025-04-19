@@ -8,9 +8,10 @@ This decorator applies bronze layer-specific functionality including:
 - Raw data quarantine
 """
 from functools import wraps
-from typing import Callable, Optional, Protocol, TypeVar
+from typing import Any, Callable, Optional, Protocol, TypeVar
 from pyspark.sql import DataFrame
 
+from dlt_framework.core.config_manager import ConfigurationManager
 from dlt_framework.core.config_models import BronzeConfig
 from dlt_framework.core.dlt_integration import DLTIntegration
 from dlt_framework.core.registry import DecoratorRegistry
@@ -42,6 +43,7 @@ def bronze(
     config: Optional[BronzeConfig] = None,
     config_path: Optional[str] = None,
     pii_detector: Optional[PIIDetector] = None,
+    **kwargs: Any,
 ) -> Callable[[T], T]:
     """Bronze layer decorator.
     
@@ -49,6 +51,7 @@ def bronze(
         config: Bronze layer configuration object.
         config_path: Path to configuration file.
         pii_detector: Optional PII detector implementation.
+        **kwargs: Additional configuration options.
         
     Returns:
         Decorated function that applies bronze layer functionality.
@@ -59,33 +62,27 @@ def bronze(
         func_name = func.__name__
 
         @wraps(func)
-        def wrapper(*args, **kwargs) -> DataFrame:
+        def wrapper(*args: Any, **inner_kwargs: Any) -> DataFrame:
             """Wrapper function that applies bronze layer functionality."""
             # Resolve configuration
-            resolved_config = DLTIntegration.resolve_config(
-                config=config,
+            resolved_config = ConfigurationManager.resolve_config(
+                layer="bronze",
                 config_path=config_path,
-                config_class=BronzeConfig
+                config_obj=config,
+                **kwargs
             )
 
             # Get DataFrame from decorated function
-            df = func(*args, **kwargs)
+            df = func(*args, **inner_kwargs)
 
             # Apply expectations if configured
+            dlt_integration = DLTIntegration()
             if resolved_config.validate:
-                for expectation in resolved_config.validate:
-                    DLTIntegration.add_expectation(
-                        name=expectation.name,
-                        constraint=expectation.constraint
-                    )
+                df = dlt_integration.add_expectations(df, resolved_config.validate)
 
             # Apply metrics if configured
             if resolved_config.metrics:
-                for metric in resolved_config.metrics:
-                    DLTIntegration.add_metric(
-                        name=metric.name,
-                        value=metric.value
-                    )
+                df = dlt_integration.add_quality_metrics(df, resolved_config.metrics)
 
             # Detect PII if enabled
             if resolved_config.pii_detection and pii_detector:
