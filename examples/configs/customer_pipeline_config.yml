@@ -3,7 +3,7 @@ version: "1.0"
 # Common settings for all tables
 common:
   catalog: "main"
-  schema: "customer_data"
+  schema_name: "customer_data"
   tags:
     owner: "data_engineering"
     environment: "demo"

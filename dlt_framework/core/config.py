@@ -46,7 +46,7 @@ class UnityTableConfig(BaseModel):
     """Unity Catalog table configuration used by all layers."""
     name: str = Field(..., description="Name of the table")
     catalog: str = Field(..., description="Unity Catalog name")
-    schema: str = Field(..., description="Schema name")
+    schema_name: str = Field(..., description="Schema name")
     description: Optional[str] = Field(None, description="Description of the table's purpose")
     properties: Dict[str, Any] = Field(default_factory=dict, description="Delta table properties")
     expectations: List[Expectation] = Field(default_factory=list, description="Data quality expectations")

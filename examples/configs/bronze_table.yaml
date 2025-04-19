@@ -19,7 +19,7 @@ table:
   # Unity Catalog metadata
   unity_catalog:
     catalog: "main"
-    schema: "bronze"
+    schema_name: "bronze"
     table_name: "raw_customers"
     column_comments:
       customer_id: "Unique identifier for the customer"
