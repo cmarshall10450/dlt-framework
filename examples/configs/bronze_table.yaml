@@ -1,0 +1,73 @@
+table:
+  name: customer_data
+  layer: bronze
+  description: "Raw customer data ingested from JSON files"
+  comment: "Bronze layer table containing raw customer data"
+  
+  # Auto Loader configuration
+  auto_loader:
+    source_path: "s3://my-bucket/raw/customers"
+    format: "cloudFiles"
+    schema_location: "s3://my-bucket/schemas/customers"
+    schema_evolution: true
+    rescue_data: true
+    options:
+      cloudFiles.format: "json"
+      cloudFiles.inferColumnTypes: "true"
+      cloudFiles.schemaHints: '{"customer_id": "string", "email": "string"}'
+  
+  # Unity Catalog metadata
+  unity_catalog:
+    catalog: "main"
+    schema: "bronze"
+    table_name: "raw_customers"
+    column_comments:
+      customer_id: "Unique identifier for the customer"
+      email: "Customer's email address"
+      created_at: "Timestamp when the customer record was created"
+    tags:
+      sensitivity: "confidential"
+      domain: "customer"
+      data_owner: "customer_success"
+  
+  # Table properties
+  properties:
+    delta.autoOptimize.optimizeWrite: "true"
+    delta.autoOptimize.autoCompact: "true"
+    pipelines.reset: "false"
+  
+  # Data quality expectations
+  expectations:
+    - name: "valid_customer_id"
+      constraint: "customer_id IS NOT NULL AND LENGTH(customer_id) = 36"
+      description: "Ensure customer ID is a valid UUID"
+      severity: "error"
+    
+    - name: "valid_email"
+      constraint: "email IS NOT NULL AND email RLIKE '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}$'"
+      description: "Ensure email is in valid format"
+      severity: "error"
+    
+    - name: "valid_timestamp"
+      constraint: "created_at IS NOT NULL"
+      description: "Ensure created_at timestamp is present"
+      severity: "warning"
+  
+  # Quality metrics
+  metrics:
+    - name: "total_records"
+      value: "COUNT(*)"
+      description: "Total number of records ingested"
+    
+    - name: "invalid_emails"
+      value: "COUNT(CASE WHEN NOT email RLIKE '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}$' THEN 1 END)"
+      description: "Count of invalid email addresses"
+    
+    - name: "missing_timestamps"
+      value: "COUNT(CASE WHEN created_at IS NULL THEN 1 END)"
+      description: "Count of records missing creation timestamp"
+
+dependencies:
+  - "raw_customer_landing_zone"
+
+version: "1.0" 

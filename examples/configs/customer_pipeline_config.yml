@@ -1,0 +1,75 @@
+version: "1.0"
+
+# Common settings for all tables
+common:
+  catalog: "main"
+  schema: "customer_data"
+  tags:
+    owner: "data_engineering"
+    environment: "demo"
+    pipeline: "customer_analytics"
+
+# Bronze layer configuration
+bronze:
+  table:
+    name: "customer_data_bronze"
+    comment: "Raw customer transaction data with PII detection"
+    properties:
+      delta.autoOptimize.optimizeWrite: "true"
+      delta.autoOptimize.autoCompact: "true"
+    tags:
+      layer: "bronze"
+      data_classification: "sensitive"
+    expectations:
+      - name: "valid_customer_id"
+        constraint: "customer_id IS NOT NULL"
+      - name: "valid_amount"
+        constraint: "purchase_amount > 0"
+    metrics:
+      - name: "total_transactions"
+        value: "COUNT(*)"
+      - name: "total_amount"
+        value: "SUM(purchase_amount)"
+
+# Silver layer configuration
+silver:
+  table:
+    name: "customer_data_silver"
+    comment: "Cleansed customer data with masked PII"
+    properties:
+      delta.autoOptimize.optimizeWrite: "true"
+      delta.autoOptimize.autoCompact: "true"
+    tags:
+      layer: "silver"
+      data_classification: "internal"
+    expectations:
+      - name: "valid_email"
+        constraint: "email RLIKE '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$'"
+    metrics:
+      - name: "invalid_email_count"
+        value: "COUNT(CASE WHEN NOT email RLIKE '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$' THEN 1 END)"
+    pii:
+      masking_enabled: true
+      masking_overrides:
+        credit_card: "redact"
+        phone_number: "truncate"
+
+# Gold layer configuration
+gold:
+  table:
+    name: "customer_metrics_gold"
+    comment: "Customer purchase metrics with PII verification"
+    properties:
+      delta.autoOptimize.optimizeWrite: "true"
+      delta.autoOptimize.autoCompact: "true"
+    tags:
+      layer: "gold"
+      data_classification: "public"
+    expectations:
+      - name: "positive_avg_amount"
+        constraint: "avg_purchase_amount > 0"
+    metrics:
+      - name: "total_customers"
+        value: "COUNT(DISTINCT customer_id)"
+    pii:
+      verify_masking: true 

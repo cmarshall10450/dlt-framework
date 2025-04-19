@@ -1,0 +1,39 @@
+# Silver layer configuration (reads from Unity Catalog bronze table)
+table:
+  name: "cleaned_customers"
+  catalog: "main"
+  schema: "silver"
+  description: "Cleaned and validated customer data"
+  properties:
+    delta.autoOptimize.optimizeWrite: "true"
+    delta.autoOptimize.autoCompact: "true"
+  tags:
+    domain: "customer"
+    data_owner: "customer_success"
+    data_quality: "validated"
+  column_comments:
+    customer_id: "Unique identifier for the customer"
+    email: "Validated customer email address"
+    created_at: "Normalized timestamp in UTC"
+    country: "Standardized country code (ISO 3166-1 alpha-2)"
+  expectations:
+    - name: "valid_country_code"
+      constraint: "country IS NOT NULL AND LENGTH(country) = 2"
+      description: "Ensure country code follows ISO 3166-1 alpha-2"
+      severity: "error"
+    - name: "valid_timestamp"
+      constraint: "created_at IS NOT NULL"
+      description: "Ensure timestamp is present"
+      severity: "error"
+  metrics:
+    - name: "records_by_country"
+      value: "COUNT(*) GROUP BY country"
+      description: "Distribution of customers by country"
+    - name: "recent_customers"
+      value: "COUNT(*) WHERE created_at > current_date - INTERVAL 30 DAYS"
+      description: "Count of customers added in last 30 days"
+
+dependencies:
+  - "main.bronze.raw_customers"
+
+version: "1.0" 

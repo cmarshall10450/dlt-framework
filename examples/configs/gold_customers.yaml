@@ -1,0 +1,39 @@
+# Gold layer configuration (reads from Unity Catalog silver table)
+table:
+  name: "customer_metrics"
+  catalog: "main"
+  schema: "gold"
+  description: "Customer analytics and aggregated metrics"
+  properties:
+    delta.autoOptimize.optimizeWrite: "true"
+    delta.autoOptimize.autoCompact: "true"
+  tags:
+    domain: "customer"
+    data_owner: "analytics"
+    update_frequency: "daily"
+  column_comments:
+    country: "Country code (ISO 3166-1 alpha-2)"
+    total_customers: "Total number of customers in the country"
+    active_customers: "Customers with activity in last 30 days"
+    growth_rate: "Month-over-month customer growth rate"
+  expectations:
+    - name: "positive_customers"
+      constraint: "total_customers >= 0 AND active_customers >= 0"
+      description: "Ensure customer counts are non-negative"
+      severity: "error"
+    - name: "valid_growth_rate"
+      constraint: "growth_rate IS NOT NULL"
+      description: "Ensure growth rate is calculated"
+      severity: "warning"
+  metrics:
+    - name: "total_active_ratio"
+      value: "SUM(active_customers) / SUM(total_customers)"
+      description: "Ratio of active to total customers"
+    - name: "avg_growth_rate"
+      value: "AVG(growth_rate)"
+      description: "Average customer growth rate across countries"
+
+dependencies:
+  - "main.silver.cleaned_customers"
+
+version: "1.0" 

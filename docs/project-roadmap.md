@@ -14,12 +14,12 @@ Build a production-ready, decorator-based framework for Delta Live Tables (DLT) 
 - [x] Integrate with Databricks and Delta Live Tables
 
 ### 1.2 Core Decorator System  
-- [ ] Implement `@medallion` universal decorator  
-- [ ] Implement `@bronze`, `@silver`, `@gold` decorators  
-- [ ] Support decorator stacking and precedence  
-- [ ] Implement decorator registry and metadata tracking  
-- [ ] Add YAML/JSON config loader  
-- [ ] Ensure compatibility with DLT import-time discovery
+- [x] Implement `@medallion` universal decorator  
+- [x] Implement `@bronze`, `@silver`, `@gold` decorators  
+- [x] Support decorator stacking and precedence  
+- [x] Implement decorator registry and metadata tracking  
+- [x] Add YAML/JSON config loader  
+- [x] Ensure compatibility with DLT import-time discovery
 
 **Priority:** High  
 **Goal:** Enable base functionality and configuration-driven pipelines
@@ -29,9 +29,9 @@ Build a production-ready, decorator-based framework for Delta Live Tables (DLT) 
 ## Phase 2: Medallion Layer Support
 
 ### 2.1 Bronze Layer  
-- [ ] Schema validation engine  
-- [ ] Quarantine logic for invalid records  
-- [ ] Source metadata capture  
+- [x] Schema validation engine  
+- [x] Quarantine logic for invalid records  
+- [x] Source metadata capture  
 - [ ] PII detection and tagging  
 - [ ] Support multiple input formats (CSV, JSON, Parquet)
 
