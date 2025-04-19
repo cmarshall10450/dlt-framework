@@ -159,4 +159,5 @@ class SilverConfig(BaseLayerConfig):
 class GoldConfig(BaseLayerConfig):
     """Gold layer configuration."""
     references: Dict[str, str] = field(default_factory=dict)
-    dimensions: List[str] = field(default_factory=list) 
+    dimensions: List[str] = field(default_factory=list)
+    verify_pii_masking: bool = True  # Default to True for security 
