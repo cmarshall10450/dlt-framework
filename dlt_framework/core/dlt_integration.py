@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Union
 import dlt
 from pyspark.sql import DataFrame
 
+from .config_models import Expectation, Metric, ExpectationAction
 from .exceptions import DLTFrameworkError
 
 
@@ -132,72 +133,82 @@ class DLTIntegration:
         return table_config
 
     @staticmethod
-    def add_expectations(df: DataFrame, expectations: List[Dict[str, Any]]) -> DataFrame:
+    def add_expectations(df: DataFrame, expectations: List[Expectation]) -> DataFrame:
         """
         Add DLT expectations to a DataFrame.
 
         Args:
             df: The input DataFrame
-            expectations: List of expectation configurations
+            expectations: List of Expectation objects with actions
 
         Returns:
             DataFrame with applied expectations
 
-        Example expectation format:
-        {
-            "name": "valid_id",
-            "condition": "id IS NOT NULL",
-            "action": "DROP"
-        }
+        Example:
+            df = DLTIntegration.add_expectations(
+                df,
+                [
+                    Expectation(
+                        name="valid_id", 
+                        constraint="id IS NOT NULL",
+                        action=ExpectationAction.DROP
+                    ),
+                    Expectation(
+                        name="valid_email", 
+                        constraint="email LIKE '%@%'",
+                        action=ExpectationAction.FAIL
+                    )
+                ]
+            )
         """
         for expectation in expectations:
-            name = expectation.get("name")
-            condition = expectation.get("condition")
-            action = expectation.get("action", "DROP")
-
-            if not name or not condition:
+            if not expectation.name or not expectation.constraint:
                 raise DLTFrameworkError(
                     f"Invalid expectation configuration: {expectation}"
                 )
 
-            if action.upper() == "DROP":
-                dlt.expect(df, name, condition)
-            elif action.upper() == "QUARANTINE":
-                dlt.expect_or_drop(df, name, condition)
-            elif action.upper() == "FAIL":
-                dlt.expect_or_fail(df, name, condition)
+            # Get the action from the expectation
+            action = expectation.action
+
+            if action == ExpectationAction.DROP:
+                dlt.expect_or_drop(df, expectation.name, expectation.constraint)
+            elif action == ExpectationAction.FAIL:
+                dlt.expect_or_fail(df, expectation.name, expectation.constraint)
+            elif action == ExpectationAction.QUARANTINE:
+                dlt.expect_or_quarantine(df, expectation.name, expectation.constraint)
             else:
-                raise DLTFrameworkError(f"Invalid expectation action: {action}")
+                raise DLTFrameworkError(
+                    f"Invalid expectation action '{action}'. Must be one of: "
+                    f"{', '.join(a.value for a in ExpectationAction)}"
+                )
 
         return df
 
     @staticmethod
-    def add_quality_metrics(df: DataFrame, metrics: List[Dict[str, Any]]) -> DataFrame:
+    def add_quality_metrics(df: DataFrame, metrics: List[Metric]) -> DataFrame:
         """
         Add DLT quality metrics to a DataFrame.
 
         Args:
             df: The input DataFrame
-            metrics: List of metric configurations
+            metrics: List of Metric objects
 
         Returns:
             DataFrame with applied quality metrics
 
-        Example metric format:
-        {
-            "name": "null_count",
-            "column": "id",
-            "metric_type": "count",
-            "condition": "id IS NULL"
-        }
+        Example:
+            df = DLTIntegration.add_quality_metrics(
+                df,
+                [
+                    Metric(name="null_count", value="COUNT(*) WHERE id IS NULL"),
+                    Metric(name="total_revenue", value="SUM(amount)")
+                ]
+            )
         """
         for metric in metrics:
-            name = metric.get("name")
-            condition = metric.get("condition")
-
-            if not name or not condition:
+            if not metric.name or not metric.value:
                 raise DLTFrameworkError(f"Invalid metric configuration: {metric}")
 
-            dlt.expect(df, name, condition)
+            dlt.expect(df, metric.name, metric.value)
 
         return df 
