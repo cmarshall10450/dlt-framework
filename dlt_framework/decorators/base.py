@@ -31,7 +31,7 @@ def medallion(
     """
     Main decorator for DLT Medallion Framework tables.
 
-    This decorator should be the outermost decorator in the stack and handles:
+    This decorator should be used in conjunction with @dlt.table and handles:
     - Configuration loading and validation
     - Layer validation
     - Integration with DLT
@@ -54,6 +54,16 @@ def medallion(
     Returns:
         Decorated function that returns a DataFrame
 
+    Example:
+        @dlt.table
+        @medallion(
+            layer="bronze",
+            expectations=[{"name": "valid_id", "constraint": "id IS NOT NULL"}],
+            metrics=[{"name": "row_count", "value": "COUNT(*)"}]
+        )
+        def my_table() -> DataFrame:
+            return spark.read.parquet("/path/to/data")
+
     Raises:
         DecoratorError: If there are issues with the decorator setup
     """
@@ -62,28 +72,21 @@ def medallion(
         registry = DecoratorRegistry()
         
         # Register this decorator instance
-        decorator_name = f"medallion_{func.__name__}"
-        registry.register(
-            decorator_name,
-            medallion,
+        registry.register_decorator(
+            name=f"medallion_{func.__name__}",
+            func=func,
             metadata={
                 "layer": layer,
-                "options": options,
                 "expectations": expectations or [],
                 "metrics": metrics or [],
                 "table_properties": table_properties or {},
                 "comment": comment,
                 "source_metadata": source_metadata,
                 "batch_id": batch_id,
-            },
+                "options": options
+            }
         )
         
-        # Load and validate configuration
-        config_manager = ConfigurationManager(config_path)
-        if options:
-            config_manager.update_config({"table": options})
-        
-        @dlt.table
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> DataFrame:
             # Get all decorators applied to this function in correct order
@@ -92,8 +95,10 @@ def medallion(
             
             # Apply DLT table properties and comment
             dlt_integration = DLTIntegration()
-            dlt_integration.apply_table_properties(table_properties)
-            dlt_integration.set_table_comment(comment)
+            if table_properties:
+                dlt_integration.apply_table_properties(table_properties)
+            if comment:
+                dlt_integration.set_table_comment(comment)
             
             # Execute the decorated function
             result = func(*args, **kwargs)
@@ -122,9 +127,6 @@ def medallion(
                 # This will be implemented as we add more specific decorators
             
             return result
-        
-        # Register that this function has been decorated
-        registry.register_decorated_function(func.__name__, decorator_name)
         
         return cast(F, wrapper)
     

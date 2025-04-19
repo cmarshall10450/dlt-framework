@@ -8,19 +8,19 @@ from typing import Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
 from datetime import datetime
 
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import DataFrame, SparkSession, Column
 from pyspark.sql import functions as F
-from pyspark.sql.types import StructType
+from pyspark.sql.types import StructType, StringType, TimestampType
 import dlt
 
 @dataclass
 class QuarantineConfig:
     """Configuration for quarantine management within DLT pipelines."""
     source_table_name: str  # Full Unity Catalog table name (catalog.schema.table)
-    error_column: str = "_error_details"
+    error_column: str = "_error"
     timestamp_column: str = "_quarantine_timestamp"
     batch_id_column: str = "_batch_id"
-    source_column: str = "_source_table"
+    source_column: str = "_source"
 
     @property
     def quarantine_table_name(self) -> str:
