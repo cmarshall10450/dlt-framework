@@ -4,7 +4,7 @@ This module provides common validation rules that can be used with the schema va
 to enforce data quality standards at the Bronze layer.
 """
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Callable
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -150,6 +150,34 @@ class DateTimeRangeRule(ValidationRule):
             return F.lit(True)
             
         return F.reduce(lambda x, y: x & y, conditions)
+
+@dataclass
+class CustomValidator(ValidationRule):
+    """Custom validation rule using a user-provided validation function."""
+    validation_fn: Callable[[Column], Column]
+    
+    def __init__(
+        self,
+        name: str,
+        validation_fn: Callable[[Column], Column],
+        description: Optional[str] = None
+    ):
+        """Initialize a custom validator.
+        
+        Args:
+            name: Name of the validation rule
+            validation_fn: Function that takes a Column and returns a Column of boolean type
+            description: Optional description of what the rule validates
+        """
+        super().__init__(
+            name=name,
+            description=description or f"Custom validation rule: {name}"
+        )
+        self.validation_fn = validation_fn
+    
+    def validate(self, column: Column) -> Column:
+        """Apply the custom validation function to a column."""
+        return self.validation_fn(column)
 
 # Common regex patterns
 EMAIL_PATTERN = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
