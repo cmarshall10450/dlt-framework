@@ -4,9 +4,11 @@ from typing import Any, Dict, List, Optional, Union
 
 import dlt
 from pyspark.sql import DataFrame
+from pyspark.sql.functions import expr
 
 from .config_models import Expectation, Metric, ExpectationAction
 from .exceptions import DLTFrameworkError
+from .quarantine import QuarantineManager
 
 
 class DLTIntegration:
@@ -133,13 +135,18 @@ class DLTIntegration:
         return table_config
 
     @staticmethod
-    def add_expectations(df: DataFrame, expectations: List[Expectation]) -> DataFrame:
+    def add_expectations(
+        df: DataFrame, 
+        expectations: List[Expectation],
+        source_table: Optional[str] = None
+    ) -> DataFrame:
         """
         Add DLT expectations to a DataFrame.
 
         Args:
             df: The input DataFrame
             expectations: List of Expectation objects with actions
+            source_table: Optional source table name for quarantine metadata
 
         Returns:
             DataFrame with applied expectations
@@ -161,28 +168,48 @@ class DLTIntegration:
                 ]
             )
         """
-        for expectation in expectations:
-            if not expectation.name or not expectation.constraint:
+        if not expectations:
+            return df
+
+        # Group expectations by action
+        action_groups: Dict[ExpectationAction, List[Expectation]] = {}
+        for exp in expectations:
+            if not exp.name or not exp.constraint:
                 raise DLTFrameworkError(
-                    f"Invalid expectation configuration: {expectation}"
+                    f"Invalid expectation configuration: {exp}"
                 )
+            action_groups.setdefault(exp.action, []).append(exp)
 
-            # Get the action from the expectation
-            action = expectation.action
+        result_df = df
 
-            if action == ExpectationAction.DROP:
-                dlt.expect_or_drop(df, expectation.name, expectation.constraint)
-            elif action == ExpectationAction.FAIL:
-                dlt.expect_or_fail(df, expectation.name, expectation.constraint)
-            elif action == ExpectationAction.QUARANTINE:
-                dlt.expect_or_quarantine(df, expectation.name, expectation.constraint)
-            else:
-                raise DLTFrameworkError(
-                    f"Invalid expectation action '{action}'. Must be one of: "
-                    f"{', '.join(a.value for a in ExpectationAction)}"
-                )
+        # Handle quarantine expectations first if any
+        quarantine_expectations = action_groups.get(ExpectationAction.QUARANTINE, [])
+        if quarantine_expectations and source_table:
+            quarantine_manager = QuarantineManager(source_table)
+            quarantine_table = quarantine_manager.get_quarantine_table_name(source_table)
+            result_df, _ = quarantine_manager.quarantine_records(
+                result_df, 
+                quarantine_expectations,
+                quarantine_table
+            )
 
-        return df
+        # Handle other expectations
+        for action, exps in action_groups.items():
+            if action == ExpectationAction.QUARANTINE:
+                continue
+
+            for exp in exps:
+                if action == ExpectationAction.DROP:
+                    dlt.expect_or_drop(result_df, exp.name, exp.constraint)
+                elif action == ExpectationAction.FAIL:
+                    dlt.expect_or_fail(result_df, exp.name, exp.constraint)
+                else:
+                    raise DLTFrameworkError(
+                        f"Invalid expectation action '{action}'. Must be one of: "
+                        f"{', '.join(a.value for a in ExpectationAction)}"
+                    )
+
+        return result_df
 
     @staticmethod
     def add_quality_metrics(df: DataFrame, metrics: List[Metric]) -> DataFrame:

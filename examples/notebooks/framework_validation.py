@@ -16,7 +16,7 @@ from typing import Dict, List
 import dlt
 from pyspark.sql import DataFrame
 import pyspark.sql.functions as F
-from pyspark.sql.types import StructType, StructField, LongType, StringType, DoubleType
+import pyspark.sql.types as T
 
 from dlt_framework.core.config_models import (
     BronzeConfig,
@@ -27,7 +27,6 @@ from dlt_framework.core.config_models import (
     MonitoringConfig,
 )
 from dlt_framework.decorators import bronze, silver, gold
-from dlt_framework.validation.quarantine import QuarantineConfig
 
 # COMMAND ----------
 # MAGIC %md
@@ -36,23 +35,27 @@ from dlt_framework.validation.quarantine import QuarantineConfig
 # COMMAND ----------
 
 def generate_sample_data(spark) -> DataFrame:
-    """Generate sample transaction data."""
+    """Generate sample transaction data with various data quality issues."""
     data = [
+        # Valid records
         (1, "PENDING", 100.50, "john@email.com", "2024-01-01"),
         (2, "completed", 200.75, "jane@email.com", "2024-01-01"),
-        (3, "FAILED", -50.25, "invalid_email", "2024-01-02"),
-        (None, "unknown", 300.00, "bob@email.com", "2024-01-02"),
+        # Invalid records for quarantine
+        (3, "FAILED", -50.25, "invalid_email", "2024-01-02"),  # Negative amount
+        (None, "unknown", 300.00, "bob@email.com", "2024-01-02"),  # Null ID
+        (5, "PENDING", -75.50, None, "2024-01-02"),  # Negative amount & null email
+        # Duplicates for testing
         (4, "PENDING", 150.00, "sarah@email.com", "2024-01-03"),
-        (4, "COMPLETED", 150.00, "sarah@email.com", "2024-01-03"),  # Duplicate
+        (4, "COMPLETED", 150.00, "sarah@email.com", "2024-01-03"),
     ]
     
     # Define schema with proper types
-    schema = StructType([
-        StructField("transaction_id", LongType(), True),
-        StructField("status", StringType(), True),
-        StructField("amount", DoubleType(), True),
-        StructField("email", StringType(), True),
-        StructField("date", StringType(), True)
+    schema = T.StructType([
+        T.StructField("transaction_id", T.LongType(), True),
+        T.StructField("status", T.StringType(), True),
+        T.StructField("amount", T.DoubleType(), True),
+        T.StructField("email", T.StringType(), True),
+        T.StructField("date", T.StringType(), True)
     ])
     
     return spark.createDataFrame(data, schema)
@@ -63,7 +66,7 @@ def generate_sample_data(spark) -> DataFrame:
 
 # COMMAND ----------
 
-# Bronze layer configuration
+# Bronze layer configuration with quarantine expectations
 bronze_config = BronzeConfig(
     quarantine=True,
     pii_detection=True,
@@ -72,15 +75,20 @@ bronze_config = BronzeConfig(
         Expectation(
             name="valid_transaction_id",
             constraint="transaction_id IS NOT NULL",
-            action="quarantine"
+            action="quarantine"  # Records with null IDs will be quarantined
         ),
         Expectation(
             name="valid_amount",
             constraint="amount > 0",
-            action="quarantine"
+            action="quarantine"  # Records with negative amounts will be quarantined
+        ),
+        Expectation(
+            name="valid_email",
+            constraint="email IS NOT NULL AND email LIKE '%@%.%'",
+            action="quarantine"  # Records with invalid emails will be quarantined
         )
     ],
-    metrics=["raw_record_count", "invalid_record_count"],
+    metrics=["raw_record_count", "quarantined_record_count"],
     monitoring=MonitoringConfig(
         metrics=["record_count", "null_count"],
         alerts=["data_quality_alert"]
@@ -137,16 +145,15 @@ config_path = notebook_dir / "config.yaml"
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Pipeline Implementation
-# MAGIC Demonstrating both configuration methods
+# MAGIC ## Pipeline Implementation with Quarantine Testing
 
 # COMMAND ----------
 
-# Using object-based configuration
+# Using object-based configuration with quarantine
 @dlt.table
 @bronze(config=bronze_config)
 def raw_transactions() -> DataFrame:
-    """Ingest raw transaction data."""
+    """Ingest raw transaction data with quarantine handling."""
     return generate_sample_data(spark)
 
 # Using YAML configuration
@@ -169,22 +176,46 @@ def transaction_metrics() -> DataFrame:
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## View Results
+# MAGIC ## View Results and Validate Quarantine
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- View raw transactions including quarantined records
-# MAGIC SELECT * FROM raw_transactions
+# MAGIC -- View raw transactions (should only include valid records)
+# MAGIC SELECT * FROM raw_transactions;
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- View cleaned transactions
-# MAGIC SELECT * FROM cleaned_transactions
+# MAGIC -- View quarantined records with their failure reasons
+# MAGIC SELECT 
+# MAGIC   *,
+# MAGIC   quarantine_metadata.quarantine_timestamp,
+# MAGIC   quarantine_metadata.source_table,
+# MAGIC   explode(quarantine_metadata.failed_expectations) as failed_expectation
+# MAGIC FROM raw_transactions_quarantine
+# MAGIC ORDER BY quarantine_metadata.quarantine_timestamp;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- Analyze quarantine reasons
+# MAGIC SELECT 
+# MAGIC   failed_expectation.name as failed_rule,
+# MAGIC   COUNT(*) as failure_count
+# MAGIC FROM raw_transactions_quarantine
+# MAGIC LATERAL VIEW explode(quarantine_metadata.failed_expectations) exp AS failed_expectation
+# MAGIC GROUP BY failed_expectation.name
+# MAGIC ORDER BY failure_count DESC;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- View cleaned transactions (should only include valid, deduplicated records)
+# MAGIC SELECT * FROM cleaned_transactions;
 
 # COMMAND ----------
 
 # MAGIC %sql
 # MAGIC -- View transaction metrics
-# MAGIC SELECT * FROM transaction_metrics 
+# MAGIC SELECT * FROM transaction_metrics; 
