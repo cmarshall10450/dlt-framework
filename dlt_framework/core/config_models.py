@@ -136,12 +136,23 @@ class SilverConfig(BaseLayerConfig):
     deduplication: bool = False
     scd: Optional[Union[SCDConfig, Dict]] = None
     normalization: Dict[str, str] = field(default_factory=dict)
+    masking_enabled: bool = False
+    masking_overrides: Dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self):
         """Process and validate configuration."""
         super().__post_init__()
         if isinstance(self.scd, dict):
             self.scd = SCDConfig(**self.scd)
+        
+        # Validate masking strategies
+        valid_strategies = {"hash", "truncate", "redact"}
+        invalid_strategies = set(self.masking_overrides.values()) - valid_strategies
+        if invalid_strategies:
+            raise ValueError(
+                f"Invalid masking strategies: {invalid_strategies}. "
+                f"Must be one of: {', '.join(valid_strategies)}"
+            )
 
 
 @dataclass
