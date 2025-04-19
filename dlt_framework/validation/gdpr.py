@@ -165,20 +165,31 @@ class GDPRValidator:
         """
         pii_columns = {pii_type: set() for pii_type in self.patterns}
         
-        for col in df.columns:
+        for field in df.schema.fields:
+            col_name = field.name
+            
             # Skip already classified columns
-            if col in self.fields:
+            if col_name in self.fields:
+                continue
+                
+            # Only check string columns for PII
+            if not isinstance(field.dataType, StringType):
                 continue
                 
             # Check each column against PII patterns
             for pii_type, pattern in self.patterns.items():
-                # Sample the column to check for matches
+                # Use when clause to avoid processing non-matching rows
                 matches = df.select(
-                    F.sum(F.col(col).rlike(pattern.pattern)).alias('matches')
+                    F.sum(
+                        F.when(
+                            F.col(col_name).rlike(pattern.pattern),
+                            1
+                        ).otherwise(0)
+                    ).alias('matches')
                 ).collect()[0]['matches']
                 
-                if matches > 0:
-                    pii_columns[pii_type].add(col)
+                if matches and matches > 0:
+                    pii_columns[pii_type].add(col_name)
                     
         return pii_columns
     

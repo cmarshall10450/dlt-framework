@@ -16,6 +16,7 @@ from typing import Dict, List
 import dlt
 from pyspark.sql import DataFrame
 import pyspark.sql.functions as F
+from pyspark.sql.types import StructType, StructField, LongType, StringType, DoubleType
 
 from dlt_framework.core.config_models import (
     BronzeConfig,
@@ -45,10 +46,16 @@ def generate_sample_data(spark) -> DataFrame:
         (4, "COMPLETED", 150.00, "sarah@email.com", "2024-01-03"),  # Duplicate
     ]
     
-    return spark.createDataFrame(
-        data,
-        ["transaction_id", "status", "amount", "email", "date"]
-    )
+    # Define schema with proper types
+    schema = StructType([
+        StructField("transaction_id", LongType(), True),
+        StructField("status", StringType(), True),
+        StructField("amount", DoubleType(), True),
+        StructField("email", StringType(), True),
+        StructField("date", StringType(), True)
+    ])
+    
+    return spark.createDataFrame(data, schema)
 
 # COMMAND ----------
 # MAGIC %md
