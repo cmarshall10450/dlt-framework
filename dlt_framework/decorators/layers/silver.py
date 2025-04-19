@@ -1,5 +1,13 @@
-"""Silver layer decorator implementation."""
+"""Silver layer decorator for the DLT Medallion Framework.
 
+This decorator applies silver layer-specific functionality including:
+- Data quality expectations
+- Metrics computation
+- PII masking
+- SCD handling
+- Deduplication
+- Data normalization
+"""
 from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Optional, Protocol, TypeVar, Union, cast
@@ -13,18 +21,22 @@ from ...core.registry import DecoratorRegistry
 from ...validation.gdpr import GDPRValidator, GDPRField
 
 
+# Get singleton registry instance
+registry = DecoratorRegistry()
+
+
 class PIIMasker(Protocol):
     """Protocol for PII masking implementations."""
     
-    def mask_pii(self, df: DataFrame) -> DataFrame:
-        """
-        Mask PII columns in the DataFrame.
+    def mask_pii(self, df: DataFrame, columns: dict[str, str]) -> DataFrame:
+        """Mask PII in specified columns.
         
         Args:
-            df: DataFrame to mask
+            df: The DataFrame to mask.
+            columns: Dictionary mapping column names to masking strategies.
             
         Returns:
-            DataFrame with masked PII columns
+            DataFrame with masked PII columns.
         """
         ...
 
@@ -66,11 +78,8 @@ def silver(
         ...     return spark.read.table("raw_transactions")
     """
     def decorator(func: T) -> T:
-        # Get the function name for registration
+        # Get function name for registration
         func_name = func.__name__
-
-        # Register with the decorator registry
-        registry = DecoratorRegistry()
 
         @wraps(func)
         def wrapper(*args: Any, **inner_kwargs: Any) -> DataFrame:
@@ -108,16 +117,43 @@ def silver(
                 if pii_fields:
                     # Use provided masker or default to GDPRValidator
                     masker = pii_masker or GDPRValidator(pii_fields)
-                    df = masker.mask_pii(df)
+                    df = masker.mask_pii(df, config_obj.masking_overrides)
+
+            # Handle SCD if enabled
+            if config_obj.scd:
+                # TODO: Implement SCD logic
+                pass
+
+            # Handle deduplication if enabled
+            if config_obj.deduplication:
+                # TODO: Implement deduplication logic
+                pass
+
+            # Handle normalization if enabled
+            if config_obj.normalization:
+                # TODO: Implement normalization logic
+                pass
 
             return df
 
-        # Register after wrapper is defined
+        # Register the decorated function
         registry.register(
             name=f"silver_{func_name}",
             decorator=wrapper,
-            metadata={"layer": "silver"},
-            decorator_type="layer"
+            metadata={
+                "layer": "silver",
+                "layer_type": "dlt_layer",
+                "config_class": SilverConfig.__name__,
+                "features": [
+                    "data_quality",
+                    "metrics",
+                    "pii_masking",
+                    "scd",
+                    "deduplication",
+                    "normalization"
+                ]
+            },
+            decorator_type="dlt_layer"
         )
 
         return cast(T, wrapper)

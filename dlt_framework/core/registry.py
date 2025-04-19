@@ -80,10 +80,11 @@ class DecoratorRegistry:
 
         # Check for conflicting layer decorators
         for existing_name, existing_type in self._decorator_types.items():
-            if existing_type == "layer" and self._metadata[existing_name]["layer"] == metadata["layer"]:
-                # Allow layer-specific decorators (bronze, silver, gold) to wrap the base medallion decorator
-                if not (name.startswith("medallion_") or existing_name.startswith("medallion_")):
-                    raise DecoratorError(f"Multiple decorators for layer {metadata['layer']} not allowed")
+            if existing_type == "dlt_layer" and self._metadata[existing_name]["layer"] == metadata["layer"]:
+                raise DecoratorError(
+                    f"Multiple decorators for layer {metadata['layer']} not allowed. "
+                    f"Found existing decorator '{existing_name}' and new decorator '{name}'."
+                )
 
     def merge_metadata(self, decorators: List[str]) -> Dict[str, Any]:
         """

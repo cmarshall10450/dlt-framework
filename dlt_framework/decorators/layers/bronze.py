@@ -16,6 +16,10 @@ from dlt_framework.core.dlt_integration import DLTIntegration
 from dlt_framework.core.registry import DecoratorRegistry
 
 
+# Get singleton registry instance
+registry = DecoratorRegistry()
+
+
 class PIIDetector(Protocol):
     """Protocol for PII detection implementations."""
     def detect_pii(self, df: DataFrame) -> dict[str, list[str]]:
@@ -51,9 +55,8 @@ def bronze(
     """
     def decorator(func: T) -> T:
         """Inner decorator function."""
-        # Register the decorator
-        registry = DecoratorRegistry()
-        decorator_name = f"bronze_{func.__name__}"
+        # Get function name for registration
+        func_name = func.__name__
 
         @wraps(func)
         def wrapper(*args, **kwargs) -> DataFrame:
@@ -100,12 +103,23 @@ def bronze(
 
             return df
 
-        # Register after wrapper is defined
+        # Register the decorated function
         registry.register(
-            name=decorator_name,
+            name=f"bronze_{func_name}",
             decorator=wrapper,
-            metadata={"layer": "bronze"},
-            decorator_type="layer"
+            metadata={
+                "layer": "bronze",
+                "layer_type": "dlt_layer",
+                "config_class": BronzeConfig.__name__,
+                "features": [
+                    "data_quality",
+                    "metrics",
+                    "pii_detection",
+                    "quarantine",
+                    "schema_evolution"
+                ]
+            },
+            decorator_type="dlt_layer"
         )
 
         return wrapper

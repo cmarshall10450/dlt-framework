@@ -1,5 +1,12 @@
-"""Gold layer decorator implementation."""
+"""Gold layer decorator for the DLT Medallion Framework.
 
+This decorator applies gold layer-specific functionality including:
+- Data quality expectations
+- Metrics computation
+- PII masking verification
+- Aggregation and metric computation
+- Business rule validation
+"""
 from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Optional, Protocol, TypeVar, Union, cast
@@ -11,6 +18,10 @@ from ...core.config_models import GoldConfig
 from ...core.dlt_integration import DLTIntegration
 from ...core.registry import DecoratorRegistry
 from ...validation.gdpr import GDPRValidator
+
+
+# Get singleton registry instance
+registry = DecoratorRegistry()
 
 
 class PIIDetector(Protocol):
@@ -71,11 +82,8 @@ def gold(
         ...     return spark.read.table("cleaned_transactions")
     """
     def decorator(func: T) -> T:
-        # Get the function name for registration
+        # Get function name for registration
         func_name = func.__name__
-
-        # Register with the decorator registry
-        registry = DecoratorRegistry()
 
         @wraps(func)
         def wrapper(*args: Any, **inner_kwargs: Any) -> DataFrame:
@@ -117,12 +125,23 @@ def gold(
 
             return df
 
-        # Register after wrapper is defined
+        # Register the decorated function
         registry.register(
             name=f"gold_{func_name}",
             decorator=wrapper,
-            metadata={"layer": "gold"},
-            decorator_type="layer"
+            metadata={
+                "layer": "gold",
+                "layer_type": "dlt_layer",
+                "config_class": GoldConfig.__name__,
+                "features": [
+                    "data_quality",
+                    "metrics",
+                    "pii_verification",
+                    "aggregation",
+                    "business_rules"
+                ]
+            },
+            decorator_type="dlt_layer"
         )
 
         return cast(T, wrapper)
