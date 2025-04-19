@@ -25,12 +25,6 @@ from .base import medallion
 T = TypeVar("T", bound=Callable[..., DataFrame])
 
 
-def _add_column_tags(dlt_integration: DLTIntegration, column_name: str, tags: Dict[str, str]) -> None:
-    """Helper function to add tags to a column."""
-    for tag_name, tag_value in tags.items():
-        dlt_integration.add_column_tag(column_name, tag_name, tag_value)
-
-
 def bronze(
     config_path: Optional[Union[str, Path]] = None,
     config: Optional[BronzeConfig] = None,
@@ -40,7 +34,7 @@ def bronze(
     
     This decorator applies bronze layer-specific functionality:
     - Data quality expectations
-    - PII detection and tagging
+    - PII detection
     - Raw data metrics collection
     - Quarantine handling for invalid records
     
@@ -86,29 +80,6 @@ def bronze(
             if config_obj.pii_detection:
                 gdpr_validator = GDPRValidator([])  # Empty field list for detection only
                 pii_columns = gdpr_validator.detect_pii(df)
-                
-                # Add PII detection results as column tags
-                for pii_type, columns in pii_columns.items():
-                    for column in columns:
-                        _add_column_tags(DLTIntegration(), column, {
-                            "pii": "true",
-                            "pii_type": pii_type,
-                            "pii_status": "detected",
-                            "layer": "bronze",
-                            "detection_timestamp": "CURRENT_TIMESTAMP"
-                        })
-                
-                # Tag non-PII columns explicitly
-                all_pii_columns = {
-                    col for cols in pii_columns.values() 
-                    for col in cols
-                }
-                for column in df.columns:
-                    if column not in all_pii_columns:
-                        _add_column_tags(DLTIntegration(), column, {
-                            "pii": "false",
-                            "layer": "bronze"
-                        })
 
             return df
 
@@ -169,34 +140,19 @@ def silver(
             # Apply PII masking if enabled
             if config_obj.masking_enabled:
                 # Get PII detection results from bronze layer
-                dlt_integration = DLTIntegration()
-                
-                # Get column tags to identify PII columns
                 pii_fields = []
                 for column in df.columns:
-                    tags = dlt_integration.get_column_tags(column)
-                    if tags.get("pii") == "true":
+                    if column in config_obj.masking_overrides:
                         pii_fields.append(GDPRField(
                             name=column,
-                            pii_type=tags.get("pii_type", "unknown"),
-                            masking_strategy=config_obj.masking_overrides.get(column) if config_obj.masking_overrides else None
+                            pii_type="custom",
+                            masking_strategy=config_obj.masking_overrides[column]
                         ))
                 
-                # Apply masking based on detected fields
+                # Apply masking based on configured fields
                 if pii_fields:
                     gdpr_validator = GDPRValidator(pii_fields)
                     df = gdpr_validator.mask_pii(df)
-                    
-                    # Update column-level tags for masked PII
-                    for field in pii_fields:
-                        _add_column_tags(dlt_integration, field.name, {
-                            "pii": "true",
-                            "pii_type": field.pii_type,
-                            "pii_status": "masked",
-                            "masking_strategy": field.masking_strategy or "default",
-                            "layer": "silver",
-                            "masking_timestamp": "CURRENT_TIMESTAMP"
-                        })
 
             return df
 
@@ -275,16 +231,6 @@ def gold(
                             for col in cols
                         )
                     )
-                
-                # Add column-level tags for verified columns
-                dlt_integration = DLTIntegration()
-                for column in df.columns:
-                    _add_column_tags(dlt_integration, column, {
-                        "pii": "false",
-                        "pii_status": "verified",
-                        "layer": "gold",
-                        "verification_timestamp": "CURRENT_TIMESTAMP"
-                    })
 
             return df
 
