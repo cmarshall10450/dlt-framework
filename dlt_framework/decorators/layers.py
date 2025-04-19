@@ -100,13 +100,14 @@ def bronze(
                 # Add source config to table properties
                 config.table.properties.update(source_config)
 
-            # Apply base medallion decorator
+            # Apply base medallion decorator with bronze-specific configuration
             decorated_func = medallion(
                 layer="bronze",
                 config_path=config_path,
                 expectations=config.table.expectations,
                 metrics=config.table.metrics,
                 table_properties=config.table.properties,
+                decorator_type="bronze_layer",  # Use a different decorator type
                 **options
             )(func)
 
