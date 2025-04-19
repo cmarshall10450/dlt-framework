@@ -76,11 +76,6 @@ def gold(
 
         # Register with the decorator registry
         registry = DecoratorRegistry()
-        registry.register(
-            name=f"gold_{func_name}",
-            metadata={"layer": "gold"},
-            decorator_type="layer"
-        )
 
         @wraps(func)
         def wrapper(*args: Any, **inner_kwargs: Any) -> DataFrame:
@@ -121,6 +116,14 @@ def gold(
                     )
 
             return df
+
+        # Register after wrapper is defined
+        registry.register(
+            name=f"gold_{func_name}",
+            decorator=wrapper,
+            metadata={"layer": "gold"},
+            decorator_type="layer"
+        )
 
         return cast(T, wrapper)
 

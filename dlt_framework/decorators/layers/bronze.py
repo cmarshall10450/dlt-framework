@@ -54,11 +54,6 @@ def bronze(
         # Register the decorator
         registry = DecoratorRegistry()
         decorator_name = f"bronze_{func.__name__}"
-        registry.register(
-            name=decorator_name,
-            metadata={"layer": "bronze"},
-            decorator_type="layer"
-        )
 
         @wraps(func)
         def wrapper(*args, **kwargs) -> DataFrame:
@@ -104,6 +99,14 @@ def bronze(
                 pass
 
             return df
+
+        # Register after wrapper is defined
+        registry.register(
+            name=decorator_name,
+            decorator=wrapper,
+            metadata={"layer": "bronze"},
+            decorator_type="layer"
+        )
 
         return wrapper
 
