@@ -29,6 +29,7 @@ class PIIDetector(Protocol):
         ...
 
 
+# Type variable for functions that return a DataFrame
 T = TypeVar("T", bound=Callable[..., DataFrame])
 
 
@@ -47,10 +48,10 @@ def gold(
     - Business rule validation
     
     Args:
-        config_path: Optional path to YAML configuration file
-        config: Optional GoldConfig object
-        pii_detector: Optional custom PII detector implementation
-        **kwargs: Additional configuration parameters
+        config_path: Path to configuration file.
+        config: Gold layer configuration object.
+        pii_detector: Optional PII detector implementation.
+        **kwargs: Additional configuration options.
         
     Example:
         >>> @dlt.table
@@ -77,7 +78,7 @@ def gold(
         registry = DecoratorRegistry()
         registry.register(
             name=f"gold_{func_name}",
-            layer="gold",
+            metadata={"layer": "gold"},
             decorator_type="layer"
         )
 

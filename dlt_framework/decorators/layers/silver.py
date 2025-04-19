@@ -29,6 +29,7 @@ class PIIMasker(Protocol):
         ...
 
 
+# Type variable for functions that return a DataFrame
 T = TypeVar("T", bound=Callable[..., DataFrame])
 
 
@@ -47,10 +48,10 @@ def silver(
     - SCD handling for dimension tables
     
     Args:
-        config_path: Optional path to YAML configuration file
-        config: Optional SilverConfig object
-        pii_masker: Optional custom PII masker implementation
-        **kwargs: Additional configuration parameters
+        config_path: Path to configuration file.
+        config: Silver layer configuration object.
+        pii_masker: Optional PII masker implementation.
+        **kwargs: Additional configuration options.
         
     Example:
         >>> @dlt.table
@@ -72,7 +73,7 @@ def silver(
         registry = DecoratorRegistry()
         registry.register(
             name=f"silver_{func_name}",
-            layer="silver",
+            metadata={"layer": "silver"},
             decorator_type="layer"
         )
 
