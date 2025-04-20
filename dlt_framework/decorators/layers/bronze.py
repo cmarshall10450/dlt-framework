@@ -76,11 +76,11 @@ def bronze(
             df = func(*args, **inner_kwargs)
 
             # Apply PII detection if configured
-            if config_obj.pii_detection and pii_detector:
+            if config_obj.governance and config_obj.governance.pii_detection and pii_detector:
                 df = pii_detector.detect(df)
 
             # Apply schema evolution if configured
-            if config_obj.schema_evolution:
+            if config_obj.governance and config_obj.governance.schema_evolution:
                 # TODO: Implement schema evolution logic
                 pass
 
