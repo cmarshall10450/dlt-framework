@@ -12,6 +12,7 @@ from .models import (
     GoldConfig,
     GovernanceConfig,
     Layer,
+    MaskingStrategy,
     Metric,
     MonitoringConfig,
     QuarantineConfig,
@@ -32,6 +33,7 @@ __all__ = [
     "GoldConfig",
     "GovernanceConfig",
     "Layer",
+    "MaskingStrategy",
     "Metric",
     "MonitoringConfig",
     "QuarantineConfig",
@@ -49,5 +51,5 @@ __all__ = [
     
     # Utility functions
     "merge_configs",
-    "load_yaml_file",
+    "load_yaml_file"
 ]

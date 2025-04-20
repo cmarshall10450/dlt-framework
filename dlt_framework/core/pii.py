@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
-from dlt_framework.config import MaskingStrategy
+from dlt_framework.config.models import MaskingStrategy
 from dlt_framework.validation.gdpr import GDPRValidator, GDPRField, create_gdpr_validator
 
 
