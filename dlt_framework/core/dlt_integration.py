@@ -108,28 +108,12 @@ class DLTIntegration:
         Create DLT expectation decorators to be applied to a transformation function.
 
         Args:
-            expectations: List of Expectation objects
+            expectations: List[Expectation]: List of expectations to apply
             source_table: Optional source table name for quarantine
             quarantine_config: Optional quarantine configuration
 
         Returns:
             Function decorator that applies DLT expectations
-
-        Example:
-            @DLTIntegration.add_expectations([
-                Expectation(
-                    name="valid_id",
-                    constraint="id IS NOT NULL",
-                    action="fail"
-                ),
-                Expectation(
-                    name="valid_amount",
-                    constraint="amount > 0",
-                    action="quarantine"
-                )
-            ], source_table="catalog.schema.table")
-            def transform_data(df: DataFrame) -> DataFrame:
-                return df
         """
         if not expectations:
             return lambda f: f
@@ -139,43 +123,50 @@ class DLTIntegration:
             self.initialize_quarantine(quarantine_config)
 
         def decorator(f):
-            def wrapper(df: DataFrame) -> DataFrame:
-                # Group expectations by action
-                action_groups = defaultdict(list)
-                for exp in expectations:
-                    action_groups[exp.action].append(exp)
+            decorated = f
 
-                result_df = df
+            # First apply non-quarantine expectations using DLT native decorators
+            non_quarantine_exps = defaultdict(dict)
+            quarantine_exps = []
+            
+            for exp in expectations:
+                if exp.action == ExpectationAction.QUARANTINE:
+                    quarantine_exps.append(exp)
+                else:
+                    non_quarantine_exps[exp.action][exp.name] = exp.constraint
 
-                # Handle non-quarantine expectations first using DLT native decorators
-                for action, exps in action_groups.items():
-                    if action == ExpectationAction.QUARANTINE:
-                        continue
+            # Apply drop expectations
+            if ExpectationAction.DROP in non_quarantine_exps:
+                decorated = dlt.expect_all_or_drop(
+                    non_quarantine_exps[ExpectationAction.DROP]
+                )(decorated)
 
-                    # Create expectation dictionary for expect_all decorators
-                    exp_dict = {exp.name: exp.constraint for exp in exps}
-                    
-                    if action == ExpectationAction.DROP:
-                        result_df = dlt.expect_all_or_drop(exp_dict)(lambda df: df)(result_df)
-                    elif action == ExpectationAction.FAIL:
-                        result_df = dlt.expect_all_or_fail(exp_dict)(lambda df: df)(result_df)
-                    else:  # Default to warn
-                        result_df = dlt.expect_all(exp_dict)(lambda df: df)(result_df)
+            # Apply fail expectations
+            if ExpectationAction.FAIL in non_quarantine_exps:
+                decorated = dlt.expect_all_or_fail(
+                    non_quarantine_exps[ExpectationAction.FAIL]
+                )(decorated)
 
-                # Handle quarantine expectations if configured
-                quarantine_exps = action_groups.get(ExpectationAction.QUARANTINE, [])
-                if quarantine_exps and self._quarantine_manager:
-                    # Use quarantine manager to handle invalid records
+            # Apply warn expectations
+            if ExpectationAction.WARN in non_quarantine_exps:
+                decorated = dlt.expect_all(
+                    non_quarantine_exps[ExpectationAction.WARN]
+                )(decorated)
+
+            # Handle quarantine expectations if configured
+            if quarantine_exps and self._quarantine_manager:
+                original_func = decorated
+                def quarantine_wrapper(*args, **kwargs):
+                    df = original_func(*args, **kwargs)
                     valid_df, _ = self._quarantine_manager.quarantine_records_by_expectations(
-                        result_df,
+                        df,
                         quarantine_exps,
-                        batch_id=None  # Could be added as a parameter if needed
+                        batch_id=None
                     )
-                    result_df = valid_df
+                    return valid_df
+                decorated = quarantine_wrapper
 
-                return result_df
-
-            return wrapper
+            return decorated
         return decorator
 
     @staticmethod
@@ -188,27 +179,16 @@ class DLTIntegration:
 
         Returns:
             Function decorator that applies DLT quality metrics
-
-        Example:
-            @DLTIntegration.add_quality_metrics([
-                Metric(name="null_count", value="COUNT(*) WHERE id IS NULL"),
-                Metric(name="total_revenue", value="SUM(amount)")
-            ])
-            def transform_data(df: DataFrame) -> DataFrame:
-                return df
         """
         if not metrics:
             return lambda f: f
 
-        def decorator(f):
-            decorated = f
-            # Group metrics into a single expect_all call for efficiency
-            metric_dict = {
-                metric.name: metric.value 
-                for metric in metrics 
-                if metric.name and metric.value
-            }
-            if metric_dict:
-                decorated = dlt.expect_all(metric_dict)(decorated)
-            return decorated
-        return decorator 
+        # Create metrics dictionary
+        metric_dict = {
+            metric.name: metric.value 
+            for metric in metrics 
+            if metric.name and metric.value
+        }
+
+        # Apply all metrics in a single decorator
+        return lambda f: dlt.expect_all(metric_dict)(f) if metric_dict else f 
