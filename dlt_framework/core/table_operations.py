@@ -8,8 +8,8 @@ from typing import Dict, List, Optional, Union
 from pyspark.sql import SparkSession, DataFrame
 import dlt
 
-from ..config.models import QuarantineConfig
-from .schema import get_custom_quarantine_schema
+from config import QuarantineConfig
+from .schema import get_quarantine_schema_from_config
 
 
 def create_quarantine_table(
@@ -32,13 +32,7 @@ def create_quarantine_table(
     
     # Determine schema based on config
     if config:
-        schema = get_custom_quarantine_schema(
-            timestamp_column=config.timestamp_column,
-            source_column=config.source_column,
-            failed_expectations_column=config.failed_expectations_column,
-            error_column=config.error_column,
-            batch_id_column=config.batch_id_column
-        )
+        schema = get_quarantine_schema_from_config(config)
     else:
         # Use default schema
         from .schema import get_quarantine_metadata_schema

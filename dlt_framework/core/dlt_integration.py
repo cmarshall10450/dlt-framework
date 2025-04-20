@@ -11,7 +11,7 @@ from ..config.models import (
     SourceFormat
 )
 from .exceptions import DLTFrameworkError
-from .quarantine import QuarantineManager
+from .quarantine_manager import QuarantineManager
 
 
 class DLTIntegration:

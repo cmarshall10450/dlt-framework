@@ -20,7 +20,6 @@ from .models import (
     UnityTableConfig,
 )
 from .manager import ConfigurationManager
-from .schema import get_quarantine_metadata_schema, get_quarantine_schema_from_config
 from .utils import merge_configs, load_yaml_file
 
 __all__ = [
