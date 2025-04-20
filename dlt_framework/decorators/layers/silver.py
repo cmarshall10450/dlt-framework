@@ -82,9 +82,10 @@ def silver(
                 metrics_decorator = dlt_integration.add_quality_metrics()
                 expectation_decorators.append(metrics_decorator)
 
-            # Add DLT table decorator
+            # Add DLT table decorator with full table path
+            full_table_name = f"{config_obj.table.catalog}.{config_obj.table.schema_name}.{table_name}"
             table_decorator = dlt.table(
-                name=table_name,
+                name=full_table_name,
                 comment=f"Silver layer table for {table_name}",
                 table_properties=table_props,
                 temporary=False,

@@ -39,7 +39,7 @@ def bronze(
             dlt_integration = DLTIntegration(bronze_config)
 
             # Prepare table properties with enhanced lineage
-            table_name = bronze_config.table_name or f.__name__
+            table_name = bronze_config.table.name or f.__name__
             table_properties = {
                 "layer": "bronze",
                 "pipelines.autoOptimize.managed": "true",
@@ -67,9 +67,10 @@ def bronze(
                 metrics_decorator = dlt_integration.add_quality_metrics()
                 expectation_decorators.append(metrics_decorator)
 
-            # Add DLT table decorator
+            # Add DLT table decorator with full table path
+            full_table_name = f"{bronze_config.table.catalog}.{bronze_config.table.schema_name}.{table_name}"
             table_decorator = dlt.table(
-                name=table_name,
+                name=full_table_name,
                 comment=f"Bronze layer table for {table_name}",
                 table_properties=table_properties,
                 temporary=False,
@@ -101,9 +102,10 @@ def bronze(
 
                 # Create quarantine table with relationship to source
                 quarantine_table = f"{table_name}_quarantine"
-                quarantine_manager.create_quarantine_table_function(
-                    source_table=table_name,
+                quarantine_manager.create_quarantine_table(
                     table_name=quarantine_table,
+                    config=bronze_config.quarantine_config,
+                    source_table=table_name,
                     partition_columns=[watermark_column] if watermark_column else None
                 )
 
