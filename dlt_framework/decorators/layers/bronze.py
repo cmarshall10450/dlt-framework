@@ -33,93 +33,81 @@ T = TypeVar("T", bound=Callable[..., DataFrame])
 
 
 def bronze(
-    config: Optional[BronzeConfig] = None,
     config_path: Optional[str] = None,
-    pii_detector: Optional[PIIDetector] = None,
-    **kwargs: Any,
-) -> Callable[[T], T]:
-    """Bronze layer decorator.
+    config: Optional[BronzeConfig] = None,
+    pii_detector: Optional[PIIDetector] = None
+) -> Callable:
+    """Bronze layer decorator for the DLT Medallion Framework.
+    
+    This decorator applies bronze layer functionality including:
+    - Data quality expectations
+    - Metrics computation
+    - PII detection
+    - Schema evolution
+    - Quarantine handling
     
     Args:
-        config: Bronze layer configuration object
-        config_path: Path to configuration file
-        pii_detector: PII detection implementation
-        **kwargs: Additional configuration options
+        config_path: Path to YAML configuration file
+        config: BronzeConfig object (alternative to config_path)
+        pii_detector: Optional PII detector implementation
         
     Returns:
-        Decorated function that applies bronze layer functionality
+        Decorated function that processes a DataFrame through the bronze layer
     """
-    def decorator(func: T) -> T:
-        """Inner decorator function."""
-        # Get function name for registration
-        func_name = func.__name__
-
-        # Resolve configuration
-        config_obj = ConfigurationManager.resolve_config(
-            layer="bronze",
-            config_path=config_path,
-            config_obj=config,
-            **kwargs
-        )
-
-        # Get table properties from DLTIntegration
+    def decorator(f: TransformFunc) -> TransformFunc:
+        # Get configuration
+        bronze_config = ConfigurationManager.get_bronze_config(config_path, config)
+        
+        # Initialize DLT integration
         dlt_integration = DLTIntegration()
+        if bronze_config.quarantine:
+            dlt_integration.initialize_quarantine(bronze_config.quarantine)
+
+        # Get standard DLT expectation decorators (non-quarantine)
+        decorators = []
+        if bronze_config.validations:
+            decorators.extend(
+                dlt_integration.get_expectation_decorators(bronze_config.validations)
+            )
+
+        # Add quality metrics as decorators if configured
+        if bronze_config.monitoring and bronze_config.monitoring.metrics:
+            decorators.append(
+                dlt_integration.add_quality_metrics(bronze_config.monitoring.metrics)
+            )
+
+        # Prepare table properties
         table_props = dlt_integration.prepare_table_properties(
-            table_config=config_obj.table,
-            layer=Layer.BRONZE,
-            governance=config_obj.governance
+            bronze_config.table,
+            Layer.BRONZE,
+            bronze_config.governance
         )
 
-        @wraps(func)
-        def wrapper(*args: Any, **inner_kwargs: Any) -> DataFrame:
-            # Get DataFrame from decorated function
-            df = func(*args, **inner_kwargs)
+        # Add DLT table decorator last
+        decorators.append(dlt.table(**table_props))
+
+        def wrapper(*args, **kwargs) -> DataFrame:
+            # Get DataFrame from original function
+            df = f(*args, **kwargs)
+
+            # Apply quarantine expectations directly to DataFrame if configured
+            if bronze_config.validations:
+                df = dlt_integration.apply_expectations_to_dataframe(
+                    df,
+                    bronze_config.validations,
+                    source_table=bronze_config.table.get_full_table_name()
+                )
 
             # Apply PII detection if configured
-            if config_obj.governance and config_obj.governance.pii_detection and pii_detector:
+            if bronze_config.pii_detection and pii_detector:
                 df = pii_detector.detect(df)
-
-            # Apply schema evolution if configured
-            if config_obj.governance and config_obj.governance.schema_evolution:
-                # TODO: Implement schema evolution logic
-                pass
-
-            # Apply quarantine if configured
-            if config_obj.quarantine:
-                # TODO: Implement quarantine logic
-                pass
-
-            # Apply expectations if configured
-            if config_obj.validations:
-                df = dlt_integration.add_expectations(df, config_obj.validations)
-
-            # Apply metrics if configured
-            if config_obj.metrics:
-                df = dlt_integration.add_quality_metrics(df, config_obj.metrics)
 
             return df
 
-        # Apply DLT table decorator with proper configuration
-        decorated = dlt.table(**table_props)(wrapper)
-
-        # Register the decorated function
-        registry.register(
-            name=f"bronze_{func_name}",
-            decorator=decorated,
-            metadata={
-                "layer": "bronze",
-                "layer_type": "dlt_layer",
-                "config_class": BronzeConfig.__name__,
-                "features": [
-                    "data_quality",
-                    "metrics",
-                    "pii_detection",
-                    "schema_evolution",
-                    "quarantine"
-                ]
-            },
-            decorator_type="dlt_layer"
-        )
+        # Apply all decorators in sequence
+        decorated = wrapper
+        for decorator in decorators:
+            decorated = decorator(decorated)
 
         return decorated
 
