@@ -1,0 +1,73 @@
+version: "1.0"
+
+environments:
+  development:
+    bronze:
+      table:
+        name: customers_dev
+        catalog: dev_catalog
+        schemaName: sales
+        description: "Development customer data"
+
+bronze:
+  table:
+    name: customers
+    catalog: default_catalog
+    schemaName: sales
+    description: "Customer data from source systems"
+  dependencies: []
+  quarantine:
+    enabled: true
+    sourceTableName: "default_catalog.sales.customers"
+  monitoring:
+    expectations:
+      - name: valid_email
+        constraint: "email IS NOT NULL AND email RLIKE '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$'"
+        action: quarantine
+      - name: valid_phone
+        constraint: "phone IS NOT NULL"
+        action: quarantine
+  governance:
+    owner: data_team
+    classification:
+      email: pii
+      phone: pii
+      name: pii
+    piiDetection: true
+
+silver:
+  table:
+    name: customersClean
+    catalog: default_catalog
+    schemaName: sales
+    description: "Cleansed customer data"
+  dependencies: ["default_catalog.sales.customers"]
+  deduplication: true
+  normalization: true
+  scd:
+    type: 2
+    keyColumns: ["customer_id"]
+    trackColumns: ["name", "email", "phone", "address"]
+    effectiveFrom: "effective_date"
+    effectiveTo: "end_date"
+    currentFlag: "is_current"
+  governance:
+    owner: data_team
+    maskingEnabled: true
+    maskingOverrides:
+      email: hash
+      phone: truncate
+
+gold:
+  table:
+    name: customerProfiles
+    catalog: default_catalog
+    schemaName: analytics
+    description: "Customer profiles for analytics"
+  dependencies: ["default_catalog.sales.customers_cleansed"]
+  references:
+    orderTable: "order_id"
+  dimensions:
+    regionDim: "region_id"
+    customerTypeDim: "customer_type_id"
+  verifyPiiMasking: true

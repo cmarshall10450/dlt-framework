@@ -18,7 +18,7 @@ from pyspark.sql import DataFrame
 import pyspark.sql.functions as F
 import pyspark.sql.types as T
 
-from dlt_framework.core.config_models import (
+from dlt_framework.config import (
     BronzeConfig,
     SilverConfig,
     GoldConfig,
