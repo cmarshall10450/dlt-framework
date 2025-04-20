@@ -7,6 +7,7 @@ This decorator applies silver layer-specific functionality including:
 - SCD handling
 - Deduplication
 - Data normalization
+- Reference data validation and lookups
 """
 from functools import wraps
 from pathlib import Path
@@ -14,7 +15,7 @@ from typing import Any, Callable, Optional, Protocol, TypeVar, Union, cast
 
 from pyspark.sql import DataFrame
 
-from dlt_framework.core import DLTIntegration, DecoratorRegistry
+from dlt_framework.core import DLTIntegration, DecoratorRegistry, ReferenceManager
 from dlt_framework.config import ConfigurationManager, SilverConfig
 from dlt_framework.validation import GDPRValidator, GDPRField
 
@@ -56,6 +57,7 @@ def silver(
     - PII masking and encryption
     - Data standardization and cleansing
     - SCD handling for dimension tables
+    - Reference data validation and lookups
     
     Args:
         config_path: Path to configuration file.
@@ -69,7 +71,15 @@ def silver(
         ...     config=SilverConfig(
         ...         masking_enabled=True,
         ...         masking_overrides={"email": "hash"},
-        ...         validate=ConfigurationManager.required_columns("id", "email")
+        ...         validate=ConfigurationManager.required_columns("id", "email"),
+        ...         references=[
+        ...             ReferenceConfig(
+        ...                 name="customer_dim",
+        ...                 table_name="catalog.schema.customer_dim",
+        ...                 join_keys={"customer_id": "id"},
+        ...                 lookup_columns=["id", "name", "type"]
+        ...             )
+        ...         ]
         ...     )
         ... )
         >>> def cleaned_transactions():
@@ -88,6 +98,12 @@ def silver(
                 config_obj=config,
                 **kwargs
             )
+
+            # Initialize reference manager
+            ref_manager = ReferenceManager(config_obj)
+            
+            # Add reference manager to function context
+            inner_kwargs["ref_manager"] = ref_manager
 
             # Get the DataFrame from the function
             df = func(*args, **inner_kwargs)
@@ -148,7 +164,8 @@ def silver(
                     "pii_masking",
                     "scd",
                     "deduplication",
-                    "normalization"
+                    "normalization",
+                    "reference_data"
                 ]
             },
             decorator_type="dlt_layer"

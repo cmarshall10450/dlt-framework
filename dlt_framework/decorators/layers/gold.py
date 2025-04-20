@@ -6,6 +6,7 @@ This decorator applies gold layer-specific functionality including:
 - PII masking verification
 - Aggregation and metric computation
 - Business rule validation
+- Reference data validation and lookups
 """
 from functools import wraps
 from pathlib import Path
@@ -14,7 +15,7 @@ from typing import Any, Callable, Optional, Protocol, TypeVar, Union, cast
 from pyspark.sql import DataFrame
 
 from dlt_framework.config import ConfigurationManager, GoldConfig
-from dlt_framework.core import DLTIntegration, DecoratorRegistry
+from dlt_framework.core import DLTIntegration, DecoratorRegistry, ReferenceManager
 from dlt_framework.validation import GDPRValidator
 
 
@@ -55,6 +56,7 @@ def gold(
     - PII masking verification
     - Aggregation and metric computation
     - Business rule validation
+    - Reference data validation and lookups
     
     Args:
         config_path: Path to configuration file.
@@ -92,6 +94,12 @@ def gold(
                 config_obj=config,
                 **kwargs
             )
+
+            # Initialize reference manager
+            ref_manager = ReferenceManager(config_obj)
+            
+            # Add reference manager to function context
+            inner_kwargs["ref_manager"] = ref_manager
 
             # Get the DataFrame from the function
             df = func(*args, **inner_kwargs)
@@ -136,7 +144,8 @@ def gold(
                     "metrics",
                     "pii_verification",
                     "aggregation",
-                    "business_rules"
+                    "business_rules",
+                    "reference_data"
                 ]
             },
             decorator_type="dlt_layer"

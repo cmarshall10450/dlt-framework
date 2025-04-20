@@ -373,6 +373,39 @@ class JDBCSource(ConfigBaseModel):
         return v
 
 
+class ReferenceConfig(ConfigBaseModel):
+    """Reference data configuration."""
+    name: str = Field(..., description="Logical name for the reference")
+    table_name: str = Field(..., description="Physical table name (catalog.schema.table)")
+    join_keys: Dict[str, str] = Field(..., description="Mapping of source columns to reference columns")
+    lookup_columns: List[str] = Field(..., description="Columns needed for lookup operations")
+    cache_ttl: Optional[int] = Field(None, description="Cache duration in seconds")
+
+    @validator("table_name")
+    def validate_table_name(cls, v):
+        """Validate fully qualified table name format."""
+        if not re.match(r'^[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$', v):
+            raise ValueError("table_name must be in format: catalog.schema.table")
+        return v
+
+    @validator("lookup_columns")
+    def validate_lookup_columns(cls, v):
+        """Validate lookup column names."""
+        if not v:
+            raise ValueError("lookup_columns cannot be empty")
+        for col in v:
+            if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', col):
+                raise ValueError(f"Invalid column name: {col}")
+        return v
+
+    @validator("cache_ttl")
+    def validate_cache_ttl(cls, v):
+        """Validate cache TTL if provided."""
+        if v is not None and v <= 0:
+            raise ValueError("cache_ttl must be positive")
+        return v
+
+
 class BaseLayerConfig(ConfigBaseModel):
     """Base configuration for all layers."""
     table: UnityTableConfig = Field(..., description="Unity Catalog table configuration")
@@ -399,7 +432,6 @@ class BaseLayerConfig(ConfigBaseModel):
 
 class BronzeConfig(BaseLayerConfig):
     """Bronze layer specific configuration."""
-    source: Optional[Union[AutoLoaderSource, JDBCSource]] = Field(None, description="Source configuration")
     quarantine: Optional[QuarantineConfig] = Field(None, description="Quarantine configuration")
     
     @root_validator(pre=True)
@@ -409,26 +441,29 @@ class BronzeConfig(BaseLayerConfig):
             values["quarantine"] = QuarantineConfig(**values["quarantine"])
         return values
 
-    @root_validator
-    def validate_source_config(cls, values):
-        """Validate source configuration."""
-        source = values.get("source")
-        if source is None:
-            raise ValueError("Bronze layer requires source configuration")
-        return values
-
 
 class SilverConfig(BaseLayerConfig):
     """Silver layer specific configuration."""
     deduplication: bool = Field(True, description="Whether deduplication is enabled")
     normalization: bool = Field(True, description="Whether data normalization is enabled")
     scd: Optional[SCDConfig] = Field(None, description="SCD configuration")
+    references: List[ReferenceConfig] = Field(default_factory=list, description="Reference data configurations")
     
     @root_validator(pre=True)
     def process_scd(cls, values):
         """Process SCD configuration if provided as dict."""
         if "scd" in values and isinstance(values["scd"], dict):
             values["scd"] = SCDConfig(**values["scd"])
+        return values
+
+    @root_validator(pre=True)
+    def process_references(cls, values):
+        """Process reference configurations if provided as dicts."""
+        if "references" in values and isinstance(values["references"], list):
+            values["references"] = [
+                ref if isinstance(ref, ReferenceConfig) else ReferenceConfig(**ref)
+                for ref in values["references"]
+            ]
         return values
 
     @root_validator
@@ -442,9 +477,19 @@ class SilverConfig(BaseLayerConfig):
 
 class GoldConfig(BaseLayerConfig):
     """Gold layer specific configuration."""
-    references: Dict[str, str] = Field(default_factory=dict, description="Reference table to join key mapping")
+    references: List[ReferenceConfig] = Field(default_factory=list, description="Reference data configurations")
     dimensions: Dict[str, str] = Field(default_factory=dict, description="Dimension to join key mapping")
     verify_pii_masking: bool = Field(True, description="Whether to verify PII masking")
+
+    @root_validator(pre=True)
+    def process_references(cls, values):
+        """Process reference configurations if provided as dicts."""
+        if "references" in values and isinstance(values["references"], list):
+            values["references"] = [
+                ref if isinstance(ref, ReferenceConfig) else ReferenceConfig(**ref)
+                for ref in values["references"]
+            ]
+        return values
 
     @validator("references", "dimensions")
     def validate_join_mappings(cls, v):
