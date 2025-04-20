@@ -13,7 +13,7 @@ from pyspark.sql import functions as F
 import dlt
 
 from .table_operations import create_quarantine_table, write_to_quarantine_table, table_exists
-from config import QuarantineConfig, Expectation
+from dlt_framework.config import QuarantineConfig, Expectation
 
 
 class QuarantineManager:

@@ -6,9 +6,8 @@ This module provides functions for creating and managing quarantine tables.
 from typing import Dict, List, Optional, Union
 
 from pyspark.sql import SparkSession, DataFrame
-import dlt
 
-from config import QuarantineConfig
+from dlt_framework.config import QuarantineConfig
 from .schema import get_quarantine_schema_from_config
 
 
