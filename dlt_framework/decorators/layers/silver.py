@@ -14,11 +14,9 @@ from typing import Any, Callable, Optional, Protocol, TypeVar, Union, cast
 
 from pyspark.sql import DataFrame
 
-from ...core.config_manager import ConfigurationManager
-from ...core.config_models import SilverConfig
-from ...core.dlt_integration import DLTIntegration
-from ...core.registry import DecoratorRegistry
-from ...validation.gdpr import GDPRValidator, GDPRField
+from core import ConfigurationManager, DLTIntegration, DecoratorRegistry
+from config import SilverConfig
+from validation import GDPRValidator, GDPRField
 
 
 # Get singleton registry instance

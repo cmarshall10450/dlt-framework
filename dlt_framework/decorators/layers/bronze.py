@@ -11,10 +11,8 @@ from functools import wraps
 from typing import Any, Callable, Optional, Protocol, TypeVar
 from pyspark.sql import DataFrame
 
-from dlt_framework.core.config_manager import ConfigurationManager
-from dlt_framework.core.config_models import BronzeConfig
-from dlt_framework.core.dlt_integration import DLTIntegration
-from dlt_framework.core.registry import DecoratorRegistry
+from core import DLTIntegration, DecoratorRegistry
+from config import BronzeConfig, ConfigurationManager
 
 
 # Get singleton registry instance
