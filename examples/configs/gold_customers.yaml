@@ -16,6 +16,8 @@ table:
     total_customers: "Total number of customers in the country"
     active_customers: "Customers with activity in last 30 days"
     growth_rate: "Month-over-month customer growth rate"
+
+monitoring:
   expectations:
     - name: "positive_customers"
       constraint: "total_customers >= 0 AND active_customers >= 0"

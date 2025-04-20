@@ -25,6 +25,7 @@ from dlt_framework.config import (
     Expectation,
     SCDConfig,
     MonitoringConfig,
+    Metric
 )
 from dlt_framework.decorators import bronze, silver, gold
 
@@ -88,12 +89,32 @@ bronze_config = BronzeConfig(
             action="quarantine"  # Records with invalid emails will be quarantined
         )
     ],
-    metrics=["raw_record_count", "quarantined_record_count"],
     monitoring=MonitoringConfig(
-        metrics=["record_count", "null_count"],
+        metrics=[
+            Metric(
+                name="raw_record_count",
+                value="COUNT(*)",
+                description="Total number of raw records"
+            ),
+            Metric(
+                name="quarantined_record_count",
+                value="COUNT(*) WHERE quarantined = true",
+                description="Number of quarantined records"
+            ),
+            Metric(
+                name="record_count",
+                value="COUNT(*)",
+                description="Total number of records"
+            ),
+            Metric(
+                name="null_count",
+                value="COUNT(*) WHERE value IS NULL",
+                description="Number of null values"
+            )
+        ],
         alerts=["data_quality_alert"]
     )
-)
+) 
 
 # Silver layer configuration
 silver_config = SilverConfig(

@@ -16,6 +16,8 @@ table:
     email: "Validated customer email address"
     created_at: "Normalized timestamp in UTC"
     country: "Standardized country code (ISO 3166-1 alpha-2)"
+
+monitoring:
   expectations:
     - name: "valid_country_code"
       constraint: "country IS NOT NULL AND LENGTH(country) = 2"

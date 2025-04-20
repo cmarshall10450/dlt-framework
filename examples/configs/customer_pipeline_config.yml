@@ -20,6 +20,7 @@ bronze:
     tags:
       layer: "bronze"
       data_classification: "sensitive"
+  monitoring:
     expectations:
       - name: "valid_customer_id"
         constraint: "customer_id IS NOT NULL"
@@ -42,17 +43,18 @@ silver:
     tags:
       layer: "silver"
       data_classification: "internal"
+  monitoring:
     expectations:
       - name: "valid_email"
         constraint: "email RLIKE '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$'"
     metrics:
       - name: "invalid_email_count"
         value: "COUNT(CASE WHEN NOT email RLIKE '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$' THEN 1 END)"
-    pii:
-      masking_enabled: true
-      masking_overrides:
-        credit_card: "redact"
-        phone_number: "truncate"
+  pii:
+    masking_enabled: true
+    masking_overrides:
+      credit_card: "redact"
+      phone_number: "truncate"
 
 # Gold layer configuration
 gold:
@@ -65,11 +67,12 @@ gold:
     tags:
       layer: "gold"
       data_classification: "public"
+  monitoring:
     expectations:
       - name: "positive_avg_amount"
         constraint: "avg_purchase_amount > 0"
     metrics:
       - name: "total_customers"
         value: "COUNT(DISTINCT customer_id)"
-    pii:
-      verify_masking: true 
+  pii:
+    verify_masking: true 

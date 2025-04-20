@@ -26,6 +26,8 @@ table:
     customer_id: "Unique identifier for the customer"
     email: "Customer's email address"
     created_at: "Timestamp when the customer record was created"
+
+monitoring:
   expectations:
     - name: "valid_customer_id"
       constraint: "customer_id IS NOT NULL AND LENGTH(customer_id) = 36"

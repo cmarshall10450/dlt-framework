@@ -445,7 +445,6 @@ class GoldConfig(BaseLayerConfig):
     references: Dict[str, str] = Field(default_factory=dict, description="Reference table to join key mapping")
     dimensions: Dict[str, str] = Field(default_factory=dict, description="Dimension to join key mapping")
     verify_pii_masking: bool = Field(True, description="Whether to verify PII masking")
-    additional_metrics: List[Metric] = Field(default_factory=list, description="Business metrics")
 
     @validator("references", "dimensions")
     def validate_join_mappings(cls, v):
