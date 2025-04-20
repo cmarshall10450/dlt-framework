@@ -1,6 +1,7 @@
 """Delta Live Tables integration module for the DLT Medallion Framework."""
 
 from typing import Any, Dict, List, Optional, Union
+from collections import defaultdict
 
 import dlt
 from pyspark.sql import DataFrame
@@ -80,106 +81,97 @@ class DLTIntegration:
 
     @staticmethod
     def add_expectations(
-        df: DataFrame, 
         expectations: List[Expectation],
         source_table: Optional[str] = None
-    ) -> DataFrame:
+    ) -> Any:
         """
-        Add DLT expectations to a DataFrame.
+        Create DLT expectation decorators to be applied to a transformation function.
 
         Args:
-            df: The input DataFrame
-            expectations: List of Expectation objects with actions
-            source_table: Optional source table name for quarantine metadata
+            expectations: List of Expectation objects
+            source_table: Optional source table name for quarantine
 
         Returns:
-            DataFrame with applied expectations
+            Function decorator that applies DLT expectations
 
         Example:
-            df = DLTIntegration.add_expectations(
-                df,
-                [
-                    Expectation(
-                        name="valid_id", 
-                        constraint="id IS NOT NULL",
-                        action=ExpectationAction.DROP
-                    ),
-                    Expectation(
-                        name="valid_email", 
-                        constraint="email LIKE '%@%'",
-                        action=ExpectationAction.FAIL
-                    )
-                ]
-            )
+            @DLTIntegration.add_expectations([
+                Expectation(
+                    name="valid_id",
+                    constraint="id IS NOT NULL",
+                    action="fail"
+                ),
+                Expectation(
+                    name="valid_amount",
+                    constraint="amount > 0",
+                    action="quarantine"
+                )
+            ], source_table="catalog.schema.table")
+            def transform_data(df: DataFrame) -> DataFrame:
+                return df
         """
         if not expectations:
-            return df
+            return lambda f: f
 
-        # Group expectations by action
-        action_groups: Dict[ExpectationAction, List[Expectation]] = {}
-        for exp in expectations:
-            if not exp.name or not exp.constraint:
-                raise DLTFrameworkError(
-                    f"Invalid expectation configuration: {exp}"
-                )
-            action_groups.setdefault(exp.action, []).append(exp)
+        def decorator(f):
+            decorated = f
+            # Group expectations by action
+            action_groups = defaultdict(list)
+            for exp in expectations:
+                action_groups[exp.action].append(exp)
 
-        result_df = df
+            # Apply expectations as decorators
+            for action, exps in action_groups.items():
+                if action == ExpectationAction.QUARANTINE:
+                    continue
 
-        # Handle quarantine expectations first if any
-        quarantine_expectations = action_groups.get(ExpectationAction.QUARANTINE, [])
-        if quarantine_expectations and source_table:
-            quarantine_manager = QuarantineManager(source_table)
-            quarantine_table = quarantine_manager.get_quarantine_table_name(source_table)
-            result_df, _ = quarantine_manager.quarantine_records(
-                result_df, 
-                quarantine_expectations,
-                quarantine_table
-            )
+                for exp in exps:
+                    if action == ExpectationAction.DROP:
+                        decorated = dlt.expect_or_drop(exp.name, exp.constraint)(decorated)
+                    elif action == ExpectationAction.FAIL:
+                        decorated = dlt.expect_or_fail(exp.name, exp.constraint)(decorated)
+                    else:
+                        raise DLTFrameworkError(
+                            f"Invalid expectation action '{action}'. Must be one of: "
+                            f"{', '.join(a.value for a in ExpectationAction)}"
+                        )
 
-        # Handle other expectations
-        for action, exps in action_groups.items():
-            if action == ExpectationAction.QUARANTINE:
-                continue
+            # Handle quarantine expectations if configured
+            quarantine_exps = action_groups.get(ExpectationAction.QUARANTINE, [])
+            if quarantine_exps and source_table:
+                # TODO: Implement quarantine logic
+                pass
 
-            for exp in exps:
-                if action == ExpectationAction.DROP:
-                    dlt.expect_or_drop(result_df, exp.name, exp.constraint)
-                elif action == ExpectationAction.FAIL:
-                    dlt.expect_or_fail(result_df, exp.name, exp.constraint)
-                else:
-                    raise DLTFrameworkError(
-                        f"Invalid expectation action '{action}'. Must be one of: "
-                        f"{', '.join(a.value for a in ExpectationAction)}"
-                    )
-
-        return result_df
+            return decorated
+        return decorator
 
     @staticmethod
-    def add_quality_metrics(df: DataFrame, metrics: List[Metric]) -> DataFrame:
+    def add_quality_metrics(metrics: List[Metric]) -> Any:
         """
-        Add DLT quality metrics to a DataFrame.
+        Create DLT quality metric decorators to be applied to a transformation function.
 
         Args:
-            df: The input DataFrame
             metrics: List of Metric objects
 
         Returns:
-            DataFrame with applied quality metrics
+            Function decorator that applies DLT quality metrics
 
         Example:
-            df = DLTIntegration.add_quality_metrics(
-                df,
-                [
-                    Metric(name="null_count", value="COUNT(*) WHERE id IS NULL"),
-                    Metric(name="total_revenue", value="SUM(amount)")
-                ]
-            )
+            @DLTIntegration.add_quality_metrics([
+                Metric(name="null_count", value="COUNT(*) WHERE id IS NULL"),
+                Metric(name="total_revenue", value="SUM(amount)")
+            ])
+            def transform_data(df: DataFrame) -> DataFrame:
+                return df
         """
-        for metric in metrics:
-            if not metric.name or not metric.value:
-                raise DLTFrameworkError(f"Invalid metric configuration: {metric}")
+        if not metrics:
+            return lambda f: f
 
-            dlt.expect(df, metric.name, metric.value)
-
-        return df 
+        def decorator(f):
+            decorated = f
+            for metric in metrics:
+                if not metric.name or not metric.value:
+                    raise DLTFrameworkError(f"Invalid metric configuration: {metric}")
+                decorated = dlt.expect(metric.name, metric.value)(decorated)
+            return decorated
+        return decorator 
