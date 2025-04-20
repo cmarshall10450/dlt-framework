@@ -33,4 +33,9 @@ class GovernanceError(DLTFrameworkError):
 
 class DecoratorError(DLTFrameworkError):
     """Raised when there is an error in decorator registration or execution."""
+    pass
+
+
+class TemplateError(DLTFrameworkError):
+    """Raised when there is an error in template processing or validation."""
     pass 

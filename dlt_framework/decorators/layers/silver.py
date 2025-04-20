@@ -14,8 +14,8 @@ from typing import Any, Callable, Optional, Protocol, TypeVar, Union, cast
 
 from pyspark.sql import DataFrame
 
-from dlt_framework.core import ConfigurationManager, DLTIntegration, DecoratorRegistry
-from dlt_framework.config import SilverConfig
+from dlt_framework.core import DLTIntegration, DecoratorRegistry
+from dlt_framework.config import ConfigurationManager, SilverConfig
 from dlt_framework.validation import GDPRValidator, GDPRField
 
 

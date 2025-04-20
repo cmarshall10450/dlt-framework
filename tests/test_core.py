@@ -4,7 +4,7 @@ import pytest
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.types import StructType, StructField, IntegerType, StringType
 
-from dlt_framework.core.config import ConfigurationManager, ConfigurationError
+from dlt_framework.config import ConfigurationManager, ConfigurationError
 from dlt_framework.core.exceptions import DecoratorError
 from dlt_framework.core.registry import DecoratorRegistry
 from dlt_framework.decorators import medallion
