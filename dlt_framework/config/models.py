@@ -333,46 +333,6 @@ class UnityTableConfig(ConfigBaseModel):
         return f"{self.catalog}.{self.schema_name}.{self.name}"
 
 
-class AutoLoaderSource(ConfigBaseModel):
-    """Auto Loader source configuration."""
-    type: Literal["auto_loader"] = Field("auto_loader", description="Source type identifier")
-    path: str = Field(..., description="Path to source data")
-    format: SourceFormat = Field(SourceFormat.CLOUD_FILES, description="Source format")
-    options: Dict[str, Any] = Field(default_factory=dict, description="Additional Auto Loader options")
-
-    @validator("path")
-    def validate_path(cls, v):
-        """Validate cloud storage path."""
-        valid_prefixes = ("s3://", "abfss://", "gs://", "wasbs://")
-        if not any(v.startswith(prefix) for prefix in valid_prefixes):
-            raise ValueError(f"Path must start with one of: {valid_prefixes}")
-        return v
-
-
-class JDBCSource(ConfigBaseModel):
-    """JDBC source configuration."""
-    type: Literal["jdbc"] = Field("jdbc", description="Source type identifier")
-    url: str = Field(..., description="JDBC connection URL")
-    table: str = Field(..., description="Source table name")
-    options: Dict[str, Any] = Field(default_factory=dict, description="Additional JDBC options")
-
-    @validator("url")
-    def validate_jdbc_url(cls, v):
-        """Validate JDBC URL format."""
-        if not re.match(r'^jdbc:[a-zA-Z0-9]+://[^/]+(/[^?]+)?(\?.*)?$', v):
-            raise ValueError("Invalid JDBC URL format")
-        return v
-
-    @validator("options")
-    def validate_required_options(cls, v):
-        """Validate required JDBC options."""
-        required_options = {"user", "password"}
-        missing_options = required_options - set(v.keys())
-        if missing_options:
-            raise ValueError(f"Missing required JDBC options: {missing_options}")
-        return v
-
-
 class ReferenceConfig(ConfigBaseModel):
     """Reference data configuration."""
     name: str = Field(..., description="Logical name for the reference")

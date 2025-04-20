@@ -6,72 +6,13 @@ import dlt
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import expr
 
-from ..config.models import (
-    Expectation, Metric, ExpectationAction,
-    SourceFormat
-)
+from ..config.models import Expectation, Metric, ExpectationAction,
 from .exceptions import DLTFrameworkError
 from .quarantine_manager import QuarantineManager
 
 
 class DLTIntegration:
     """Handles integration with Delta Live Tables functionality."""
-
-    @staticmethod
-    def configure_auto_loader(
-        source_path: str,
-        format: Union[str, SourceFormat] = SourceFormat.CLOUD_FILES,
-        schema_location: Optional[str] = None,
-        schema_evolution: bool = True,
-        rescue_data: bool = True,
-        **options: Any
-    ) -> Dict[str, Any]:
-        """
-        Configure Auto Loader for streaming ingestion.
-
-        Args:
-            source_path: Path to source data
-            format: Source format (default: cloudFiles)
-            schema_location: Optional path to store schema information
-            schema_evolution: Whether to enable schema evolution
-            rescue_data: Whether to rescue malformed records
-            **options: Additional Auto Loader options
-
-        Returns:
-            Dictionary of Auto Loader configuration options
-
-        Example:
-            config = DLTIntegration.configure_auto_loader(
-                source_path="s3://bucket/path",
-                format=SourceFormat.JSON,
-                cloudFiles={"format": "json"},
-                schema_evolution=True
-            )
-        """
-        # Convert format to string if it's an enum
-        format_str = format.value if isinstance(format, SourceFormat) else format
-
-        auto_loader_config = {
-            "format": format_str,
-            "path": source_path,
-            "cloudFiles.schemaEvolution.enabled": str(schema_evolution).lower(),
-            "cloudFiles.rescueDataOnError": str(rescue_data).lower(),
-        }
-
-        if schema_location:
-            auto_loader_config["cloudFiles.schemaLocation"] = schema_location
-
-        # Add any additional options
-        for key, value in options.items():
-            if isinstance(value, dict):
-                # Handle nested options like cloudFiles.format
-                for nested_key, nested_value in value.items():
-                    full_key = f"{key}.{nested_key}"
-                    auto_loader_config[full_key] = str(nested_value)
-            else:
-                auto_loader_config[key] = str(value)
-
-        return auto_loader_config
 
     @staticmethod
     def prepare_table_properties(

@@ -25,7 +25,9 @@ from dlt_framework.config import (
     Expectation,
     SCDConfig,
     MonitoringConfig,
-    Metric
+    Metric,
+    UnityTableConfig,
+    QuarantineConfig
 )
 from dlt_framework.decorators import bronze, silver, gold
 
@@ -69,7 +71,18 @@ def generate_sample_data(spark) -> DataFrame:
 
 # Bronze layer configuration with quarantine expectations
 bronze_config = BronzeConfig(
-    quarantine=True,
+    # Unity Catalog table configuration (required)
+    table=UnityTableConfig(
+        name="raw_transactions",
+        catalog="demo",
+        schema="bronze",
+        description="Raw transaction data with quality checks and quarantine"
+    ),
+    # Quarantine configuration
+    quarantine=QuarantineConfig(
+        enabled=True,
+        source_table_name="demo.bronze.raw_transactions"
+    ),
     pii_detection=True,
     schema_evolution=True,
     validate=[
