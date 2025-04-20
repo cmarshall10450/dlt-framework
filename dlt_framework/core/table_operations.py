@@ -3,7 +3,7 @@
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 import dlt
@@ -53,7 +53,8 @@ def create_quarantine_table(table_name: str, config: QuarantineConfig) -> None:
     ])
 
     # Create empty DataFrame with a dummy key column for DLT
-    empty_df = dlt.get_spark_session().createDataFrame(
+    spark = SparkSession.getActiveSession()
+    empty_df = spark.createDataFrame(
         [(
             1,  # dummy_key
             None,  # error

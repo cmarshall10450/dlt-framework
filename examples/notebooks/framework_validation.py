@@ -77,7 +77,7 @@ bronze_config = BronzeConfig(
     table=UnityTableConfig(
         name="raw_transactions",
         catalog="demo",
-        schemaName="bronze",
+        schema="bronze",
         description="Raw transaction data with quality checks and quarantine"
     ),
     # Quarantine configuration
@@ -136,7 +136,7 @@ silver_config = SilverConfig(
     table=UnityTableConfig(
         name="cleaned_transactions",
         catalog="demo",
-        schemaName="silver",
+        schema="silver",
         description="Cleaned and standardized transaction data"
     ),
     deduplication=True,
@@ -160,7 +160,7 @@ gold_config = GoldConfig(
     table=UnityTableConfig(
         name="transaction_metrics",
         catalog="demo",
-        schemaName="gold",
+        schema="gold",
         description="Aggregated transaction metrics with dimension references"
     ),
     references=[

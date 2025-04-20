@@ -189,10 +189,14 @@ class DLTIntegration:
                 dlt.expect_all_or_fail(non_quarantine_exps[ExpectationAction.FAIL])
             )
 
-        if ExpectationAction.WARN in non_quarantine_exps:
-            decorators.append(
-                dlt.expect_all(non_quarantine_exps[ExpectationAction.WARN])
-            )
+        # For any other action type, use dlt.expect_all (warning-level expectations)
+        other_exps = {}
+        for action, exps in non_quarantine_exps.items():
+            if action not in (ExpectationAction.DROP, ExpectationAction.FAIL, ExpectationAction.QUARANTINE):
+                other_exps.update(exps)
+        
+        if other_exps:
+            decorators.append(dlt.expect_all(other_exps))
 
         return decorators
 
