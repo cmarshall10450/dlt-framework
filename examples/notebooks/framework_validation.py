@@ -113,7 +113,7 @@ bronze_config = BronzeConfig(
             ),
             Metric(
                 name="quarantined_record_count",
-                value="COUNT(*) WHERE quarantined = true",
+                value="COUNT(*) FILTER (WHERE quarantined = true)",
                 description="Number of quarantined records"
             ),
             Metric(
@@ -123,7 +123,7 @@ bronze_config = BronzeConfig(
             ),
             Metric(
                 name="null_count",
-                value="COUNT(*) WHERE value IS NULL",
+                value="COUNT(*) FILTER (WHERE value IS NULL)",
                 description="Number of null values"
             )
         ],
