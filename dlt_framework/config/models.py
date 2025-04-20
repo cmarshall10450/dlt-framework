@@ -168,7 +168,7 @@ class QuarantineConfig(ConfigBaseModel):
             raise ValueError("source_table_name must be in format: catalog.schema.table")
         return v
 
-    @validator("*", pre=True, exclude={"enabled", "source_table_name"})
+    @validator("error_column", "timestamp_column", "batch_id_column", "source_column", "failed_expectations_column")
     def validate_column_names(cls, v, field):
         """Validate column name format."""
         if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', v):
