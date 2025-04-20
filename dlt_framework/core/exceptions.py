@@ -28,4 +28,9 @@ class MonitoringError(DLTFrameworkError):
 
 class GovernanceError(DLTFrameworkError):
     """Raised when there is an error in governance or compliance checks."""
+    pass
+
+
+class DecoratorError(DLTFrameworkError):
+    """Raised when there is an error in decorator registration or execution."""
     pass 
