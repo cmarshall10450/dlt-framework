@@ -307,7 +307,7 @@ class UnityTableConfig(ConfigBaseModel):
     """Unity Catalog table configuration."""
     name: str = Field(..., description="Name of the table")
     catalog: str = Field(..., description="Unity Catalog name")
-    schema_name: str = Field(..., description="Schema name")
+    schema_name: str = Field(..., description="Schema name", alias="schema")
     description: Optional[str] = Field(None, description="Description of the table's purpose")
     properties: Dict[DeltaProperty, Any] = Field(default_factory=dict, description="Delta table properties")
     column_comments: Dict[str, str] = Field(default_factory=dict, description="Column-level comments")
@@ -436,14 +436,21 @@ class GoldConfig(BaseLayerConfig):
             ]
         return values
 
-    @validator("references", "dimensions")
-    def validate_join_mappings(cls, v):
-        """Validate join key mappings."""
+    @validator("dimensions")
+    def validate_dimensions(cls, v):
+        """Validate dimension mappings."""
         for key, value in v.items():
             if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', key):
-                raise ValueError(f"Invalid join key: {key}")
+                raise ValueError(f"Invalid dimension name: {key}")
             if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', value):
-                raise ValueError(f"Invalid join value: {value}")
+                raise ValueError(f"Invalid join column: {value}")
+        return v
+
+    @validator("references")
+    def validate_references(cls, v):
+        """Validate reference configurations."""
+        if not isinstance(v, list):
+            raise ValueError("References must be a list")
         return v
 
     @root_validator
