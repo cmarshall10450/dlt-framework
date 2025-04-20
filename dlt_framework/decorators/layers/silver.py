@@ -7,8 +7,10 @@ This decorator applies silver layer-specific functionality including:
 - Reference data validation
 """
 from functools import wraps
-from typing import Any, Callable, Optional, TypeVar, Dict, List
+from typing import Any, Callable, Optional, TypeVar, Dict, List, Union
 from collections import defaultdict
+import json
+from datetime import datetime
 
 from pyspark.sql import DataFrame
 import dlt
@@ -26,6 +28,135 @@ T = TypeVar("T", bound=Callable[..., DataFrame])
 
 
 def silver(
+    config_path: Optional[str] = None,
+    config: Optional[SilverConfig] = None
+) -> Callable:
+    """Silver layer decorator with business rule validation."""
+    def decorator(f: Callable) -> Callable:
+        @wraps(f)
+        def wrapper(*args: Any, **kwargs: Any) -> DataFrame:
+            # Resolve configuration
+            config_obj = ConfigurationManager.resolve_config(
+                layer=Layer.SILVER,
+                config_path=config_path,
+                config_obj=config
+            )
+
+            # Initialize DLT integration
+            dlt_integration = DLTIntegration(config_obj)
+
+            # Prepare table properties with enhanced lineage
+            table_name = config_obj.table.name or f.__name__
+            table_props = {
+                "layer": "silver",
+                "pipelines.autoOptimize.managed": "true",
+                "delta.columnMapping.mode": "name",
+                "pipelines.metadata.createdBy": "dlt_framework",
+                "pipelines.metadata.createdTimestamp": datetime.now().isoformat(),
+                "comment": json.dumps({
+                    "description": f.__doc__ or f"Silver table for {table_name}",
+                    "config": config_obj.dict(),
+                    "features": {
+                        "deduplication": config_obj.deduplication,
+                        "normalization": config_obj.normalization,
+                        "scd": bool(config_obj.scd),
+                        "references": bool(config_obj.references)
+                    }
+                })
+            }
+
+            # Get DLT expectation decorators for business rules
+            expectation_decorators = []
+            if config_obj.validations:
+                for expectation in config_obj.validations:
+                    decorator = dlt.expect(
+                        name=expectation.name,
+                        constraint=expectation.constraint,
+                        action=expectation.action.value,  # Will be 'fail' or 'drop'
+                        description=expectation.description
+                    )
+                    expectation_decorators.append(decorator)
+
+            # Add quality metrics if monitoring is configured
+            if config_obj.monitoring_config:
+                metrics_decorator = dlt_integration.add_quality_metrics()
+                expectation_decorators.append(metrics_decorator)
+
+            # Add DLT table decorator
+            table_decorator = dlt.table(
+                name=table_name,
+                comment=f"Silver layer table for {table_name}",
+                table_properties=table_props,
+                temporary=False,
+                path=f"{config_obj.table.storage_location}/{table_name}" if config_obj.table.storage_location else None
+            )
+            expectation_decorators.append(table_decorator)
+
+            # Apply all decorators to the function
+            decorated_func = f
+            for decorator in reversed(expectation_decorators):
+                decorated_func = decorator(decorated_func)
+
+            # Get DataFrame from decorated function
+            df = decorated_func(*args, **kwargs)
+
+            # Apply deduplication if configured
+            if config_obj.deduplication:
+                df = df.dropDuplicates()
+
+            # Apply normalization if configured
+            if config_obj.normalization:
+                df = dlt_integration.normalize_dataframe(df)
+
+            # Apply SCD logic if configured
+            if config_obj.scd:
+                df = dlt_integration.apply_scd(df, config_obj.scd)
+
+            # Apply reference data joins if configured
+            if config_obj.references:
+                df = dlt_integration.apply_references(df, config_obj.references)
+
+            return df
+
+        return wrapper
+
+    return decorator
+
+
+def create_expectation_decorators(expectations: List[Expectation]) -> List[Callable]:
+    """Create DLT expectation decorators grouped by action."""
+    if not expectations:
+        return []
+
+    # Group expectations by action
+    action_groups: Dict[ExpectationAction, Dict[str, str]] = defaultdict(dict)
+    for exp in expectations:
+        action = ExpectationAction(exp.action) if isinstance(exp.action, str) else exp.action
+        if action != ExpectationAction.QUARANTINE:
+            action_groups[action][exp.name] = exp.constraint
+
+    decorators = []
+    
+    # Create decorators for each action type
+    if ExpectationAction.DROP in action_groups:
+        decorators.append(dlt.expect_all_or_drop(action_groups[ExpectationAction.DROP]))
+    
+    if ExpectationAction.FAIL in action_groups:
+        decorators.append(dlt.expect_all_or_fail(action_groups[ExpectationAction.FAIL]))
+    
+    # Handle warn-level expectations
+    warn_exps = {}
+    for action, exps in action_groups.items():
+        if action not in (ExpectationAction.DROP, ExpectationAction.FAIL, ExpectationAction.QUARANTINE):
+            warn_exps.update(exps)
+    
+    if warn_exps:
+        decorators.append(dlt.expect_all(warn_exps))
+    
+    return decorators
+
+
+def silver_old(
     config: Optional[SilverConfig] = None,
     config_path: Optional[str] = None,
     **kwargs: Any,
