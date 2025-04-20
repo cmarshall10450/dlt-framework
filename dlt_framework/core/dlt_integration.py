@@ -209,41 +209,38 @@ class DLTIntegration:
 
     def add_expectations(
         self,
+        df: DataFrame,
         expectations: List[Expectation],
         source_table: Optional[str] = None,
         quarantine_config: Optional[QuarantineConfig] = None
-    ) -> Any:
+    ) -> DataFrame:
         """
-        Create DLT expectation decorators to be applied to a transformation function.
+        Apply expectations to a DataFrame.
         This method is maintained for backward compatibility but prefer using
         get_expectation_decorators() and apply_expectations_to_dataframe() for more control.
 
         Args:
+            df: Input DataFrame
             expectations: List of expectations to apply
             source_table: Optional source table name for quarantine
             quarantine_config: Optional quarantine configuration
 
         Returns:
-            Function decorator that applies DLT expectations
+            DataFrame with expectations applied
         """
         if not expectations:
-            return lambda f: f
+            return df
 
         # Initialize quarantine if config provided
         if quarantine_config:
             self.initialize_quarantine(quarantine_config)
 
-        # Get standard expectation decorators
-        decorators = self.get_expectation_decorators(expectations)
-
-        def decorator(f):
-            # Apply all decorators in sequence
-            decorated = f
-            for dec in decorators:
-                decorated = dec(decorated)
-            return decorated
-
-        return decorator
+        # Apply expectations directly to DataFrame
+        return self.apply_expectations_to_dataframe(
+            df,
+            expectations,
+            source_table=source_table
+        )
 
     @staticmethod
     def add_quality_metrics(metrics: List[Metric]) -> Any:

@@ -89,7 +89,7 @@ def silver(
 
             # Apply expectations if configured
             if config_obj.validations:
-                df = dlt_integration.add_expectations(df, config_obj.validations)
+                df = dlt_integration.apply_expectations_to_dataframe(df, config_obj.validations)
 
             # Apply metrics if configured
             if config_obj.metrics:
