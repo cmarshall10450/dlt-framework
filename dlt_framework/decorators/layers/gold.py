@@ -63,38 +63,33 @@ def gold(
         config: Gold layer configuration object.
         pii_detector: Optional PII detector implementation.
         **kwargs: Additional configuration options.
-        
-    Example:
-        >>> @dlt.table
-        >>> @gold(
-        ...     config=GoldConfig(
-        ...         verify_pii_masking=True,
-        ...         validate=ConfigurationManager.reference_check({
-        ...             "customer_id": "dim_customers.id"
-        ...         }),
-        ...         monitoring=ConfigurationManager.monitor(
-        ...             metrics=["daily_revenue", "customer_count"],
-        ...             alerts=["revenue_drop_alert"]
-        ...         )
-        ...     )
-        ... )
-        >>> def customer_metrics():
-        ...     return spark.read.table("cleaned_transactions")
     """
     def decorator(func: T) -> T:
         # Get function name for registration
         func_name = func.__name__
 
+        # Resolve configuration early to get table name
+        config_obj = ConfigurationManager.resolve_config(
+            layer="gold",
+            config_path=config_path,
+            config_obj=config,
+            **kwargs
+        )
+
+        # Get table properties from DLTIntegration
+        dlt_integration = DLTIntegration()
+        table_props = dlt_integration.prepare_table_properties(
+            catalog=config_obj.table.catalog,
+            schema=config_obj.table.schema_name,
+            table_name=config_obj.table.name,
+            comment=config_obj.table.description,
+            properties=config_obj.table.properties,
+            tags=config_obj.table.tags,
+            column_comments=config_obj.table.column_comments
+        )
+
         @wraps(func)
         def wrapper(*args: Any, **inner_kwargs: Any) -> DataFrame:
-            # Resolve configuration
-            config_obj = ConfigurationManager.resolve_config(
-                layer="gold",
-                config_path=config_path,
-                config_obj=config,
-                **kwargs
-            )
-
             # Initialize reference manager
             ref_manager = ReferenceManager(config_obj)
             
@@ -105,7 +100,6 @@ def gold(
             df = func(*args, **inner_kwargs)
 
             # Apply expectations and metrics if configured
-            dlt_integration = DLTIntegration()
             if config_obj.validate:
                 df = dlt_integration.add_expectations(df, config_obj.validate)
             if config_obj.metrics:
@@ -131,10 +125,13 @@ def gold(
 
             return df
 
+        # Apply DLT table decorator with proper configuration
+        decorated = dlt.table(**table_props)(wrapper)
+
         # Register the decorated function
         registry.register(
             name=f"gold_{func_name}",
-            decorator=wrapper,
+            decorator=decorated,
             metadata={
                 "layer": "gold",
                 "layer_type": "dlt_layer",
@@ -151,6 +148,6 @@ def gold(
             decorator_type="dlt_layer"
         )
 
-        return cast(T, wrapper)
+        return decorated
 
     return decorator 

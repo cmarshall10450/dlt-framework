@@ -6,7 +6,7 @@ import dlt
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import expr
 
-from ..config.models import Expectation, Metric, ExpectationAction,
+from ..config.models import Expectation, Metric, ExpectationAction
 from .exceptions import DLTFrameworkError
 from .quarantine_manager import QuarantineManager
 

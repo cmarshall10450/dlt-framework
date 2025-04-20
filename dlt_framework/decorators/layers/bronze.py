@@ -13,6 +13,7 @@ from pyspark.sql import DataFrame
 
 from dlt_framework.core import DLTIntegration, DecoratorRegistry
 from dlt_framework.config import BronzeConfig, ConfigurationManager
+import dlt
 
 
 # Get singleton registry instance
@@ -59,22 +60,33 @@ def bronze(
         # Get function name for registration
         func_name = func.__name__
 
+        # Resolve configuration early to get table name
+        resolved_config = ConfigurationManager.resolve_config(
+            layer="bronze",
+            config_path=config_path,
+            config_obj=config,
+            **kwargs
+        )
+
+        # Get table properties from DLTIntegration
+        dlt_integration = DLTIntegration()
+        table_props = dlt_integration.prepare_table_properties(
+            catalog=resolved_config.table.catalog,
+            schema=resolved_config.table.schema_name,
+            table_name=resolved_config.table.name,
+            comment=resolved_config.table.description,
+            properties=resolved_config.table.properties,
+            tags=resolved_config.table.tags,
+            column_comments=resolved_config.table.column_comments
+        )
+
         @wraps(func)
         def wrapper(*args: Any, **inner_kwargs: Any) -> DataFrame:
             """Wrapper function that applies bronze layer functionality."""
-            # Resolve configuration
-            resolved_config = ConfigurationManager.resolve_config(
-                layer="bronze",
-                config_path=config_path,
-                config_obj=config,
-                **kwargs
-            )
-
             # Get DataFrame from decorated function
             df = func(*args, **inner_kwargs)
 
             # Apply expectations if configured
-            dlt_integration = DLTIntegration()
             if resolved_config.validate:
                 df = dlt_integration.add_expectations(df, resolved_config.validate)
 
@@ -98,10 +110,13 @@ def bronze(
 
             return df
 
+        # Apply DLT table decorator with proper configuration
+        decorated = dlt.table(**table_props)(wrapper)
+
         # Register the decorated function
         registry.register(
             name=f"bronze_{func_name}",
-            decorator=wrapper,
+            decorator=decorated,
             metadata={
                 "layer": "bronze",
                 "layer_type": "dlt_layer",
@@ -117,6 +132,6 @@ def bronze(
             decorator_type="dlt_layer"
         )
 
-        return wrapper
+        return decorated
 
     return decorator 

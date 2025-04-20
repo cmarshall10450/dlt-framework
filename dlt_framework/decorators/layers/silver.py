@@ -64,41 +64,33 @@ def silver(
         config: Silver layer configuration object.
         pii_masker: Optional PII masker implementation.
         **kwargs: Additional configuration options.
-        
-    Example:
-        >>> @dlt.table
-        >>> @silver(
-        ...     config=SilverConfig(
-        ...         masking_enabled=True,
-        ...         masking_overrides={"email": "hash"},
-        ...         validate=ConfigurationManager.required_columns("id", "email"),
-        ...         references=[
-        ...             ReferenceConfig(
-        ...                 name="customer_dim",
-        ...                 table_name="catalog.schema.customer_dim",
-        ...                 join_keys={"customer_id": "id"},
-        ...                 lookup_columns=["id", "name", "type"]
-        ...             )
-        ...         ]
-        ...     )
-        ... )
-        >>> def cleaned_transactions():
-        ...     return spark.read.table("raw_transactions")
     """
     def decorator(func: T) -> T:
         # Get function name for registration
         func_name = func.__name__
 
+        # Resolve configuration early to get table name
+        config_obj = ConfigurationManager.resolve_config(
+            layer="silver",
+            config_path=config_path,
+            config_obj=config,
+            **kwargs
+        )
+
+        # Get table properties from DLTIntegration
+        dlt_integration = DLTIntegration()
+        table_props = dlt_integration.prepare_table_properties(
+            catalog=config_obj.table.catalog,
+            schema=config_obj.table.schema_name,
+            table_name=config_obj.table.name,
+            comment=config_obj.table.description,
+            properties=config_obj.table.properties,
+            tags=config_obj.table.tags,
+            column_comments=config_obj.table.column_comments
+        )
+
         @wraps(func)
         def wrapper(*args: Any, **inner_kwargs: Any) -> DataFrame:
-            # Resolve configuration
-            config_obj = ConfigurationManager.resolve_config(
-                layer="silver",
-                config_path=config_path,
-                config_obj=config,
-                **kwargs
-            )
-
             # Initialize reference manager
             ref_manager = ReferenceManager(config_obj)
             
@@ -109,7 +101,6 @@ def silver(
             df = func(*args, **inner_kwargs)
 
             # Apply expectations and metrics if configured
-            dlt_integration = DLTIntegration()
             if config_obj.validate:
                 df = dlt_integration.add_expectations(df, config_obj.validate)
             if config_obj.metrics:
@@ -150,10 +141,13 @@ def silver(
 
             return df
 
+        # Apply DLT table decorator with proper configuration
+        decorated = dlt.table(**table_props)(wrapper)
+
         # Register the decorated function
         registry.register(
             name=f"silver_{func_name}",
-            decorator=wrapper,
+            decorator=decorated,
             metadata={
                 "layer": "silver",
                 "layer_type": "dlt_layer",
@@ -171,6 +165,6 @@ def silver(
             decorator_type="dlt_layer"
         )
 
-        return cast(T, wrapper)
+        return decorated
 
     return decorator 

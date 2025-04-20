@@ -184,21 +184,18 @@ config_path = notebook_dir / "config.yaml"
 # COMMAND ----------
 
 # Using object-based configuration with quarantine
-@dlt.table
 @bronze(config=bronze_config)
 def raw_transactions() -> DataFrame:
     """Ingest raw transaction data with quarantine handling."""
     return generate_sample_data(spark)
 
 # Using YAML configuration
-@dlt.table
 @silver(config_path=config_path)
 def cleaned_transactions() -> DataFrame:
     """Clean and standardize transaction data."""
     return dlt.read("raw_transactions")
 
 # Using object-based configuration
-@dlt.table
 @gold(config=gold_config)
 def transaction_metrics() -> DataFrame:
     """Calculate transaction metrics."""
