@@ -449,6 +449,9 @@ class GoldConfig(BaseLayerConfig):
     @root_validator
     def validate_gold_config(cls, values):
         """Validate Gold layer configuration."""
-        if values.get("verify_pii_masking") and not values.get("governance", {}).get("pii_detection"):
-            raise ValueError("PII detection must be enabled when verify_pii_masking is True")
+        verify_pii_masking = values.get("verify_pii_masking", False)
+        governance = values.get("governance")
+        
+        if verify_pii_masking and (not governance or not governance.pii_detection):
+            raise ValueError("PII detection must be enabled in governance config when verify_pii_masking is True")
         return values

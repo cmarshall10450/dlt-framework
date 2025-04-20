@@ -27,7 +27,8 @@ from dlt_framework.config import (
     MonitoringConfig,
     Metric,
     UnityTableConfig,
-    QuarantineConfig
+    QuarantineConfig,
+    GovernanceConfig
 )
 from dlt_framework.decorators import bronze, silver, gold
 
@@ -155,6 +156,12 @@ silver_config = SilverConfig(
 
 # Gold layer configuration
 gold_config = GoldConfig(
+    table=UnityTableConfig(
+        name="transaction_metrics",
+        catalog="demo",
+        schemaName="gold",
+        description="Aggregated transaction metrics with dimension references"
+    ),
     references={
         "customer_id": "dim_customers.id",
         "product_id": "dim_products.id"
@@ -166,7 +173,10 @@ gold_config = GoldConfig(
             constraint="customer_id IS NOT NULL AND product_id IS NOT NULL",
             action="fail"
         )
-    ]
+    ],
+    governance=GovernanceConfig(
+        pii_detection=True  # Enable PII detection since verify_pii_masking is True
+    )
 )
 
 # COMMAND ----------
