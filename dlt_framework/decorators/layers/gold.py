@@ -4,19 +4,17 @@ This decorator applies gold layer-specific functionality including:
 - Data quality expectations
 - Metrics computation
 - PII masking verification
-- Aggregation and metric computation
+- Aggregation
 - Business rule validation
-- Reference data validation and lookups
 """
 from functools import wraps
-from pathlib import Path
-from typing import Any, Callable, Optional, Protocol, TypeVar, Union, cast
+from typing import Any, Callable, Optional, Protocol, TypeVar
 
 from pyspark.sql import DataFrame
+import dlt
 
-from dlt_framework.config import ConfigurationManager, GoldConfig
-from dlt_framework.core import DLTIntegration, DecoratorRegistry, ReferenceManager
-from dlt_framework.validation import GDPRValidator
+from dlt_framework.core import DLTIntegration, DecoratorRegistry
+from dlt_framework.config import GoldConfig, ConfigurationManager, Layer
 
 
 # Get singleton registry instance
@@ -25,17 +23,8 @@ registry = DecoratorRegistry()
 
 class PIIDetector(Protocol):
     """Protocol for PII detection implementations."""
-    
-    def detect_pii(self, df: DataFrame) -> dict[str, list[str]]:
-        """
-        Detect PII columns in the DataFrame.
-        
-        Args:
-            df: DataFrame to analyze
-            
-        Returns:
-            Dictionary mapping PII types to lists of column names
-        """
+    def detect(self, df: DataFrame) -> DataFrame:
+        """Detect PII in DataFrame."""
         ...
 
 
@@ -44,31 +33,28 @@ T = TypeVar("T", bound=Callable[..., DataFrame])
 
 
 def gold(
-    config_path: Optional[Union[str, Path]] = None,
     config: Optional[GoldConfig] = None,
+    config_path: Optional[str] = None,
     pii_detector: Optional[PIIDetector] = None,
     **kwargs: Any,
 ) -> Callable[[T], T]:
     """Gold layer decorator.
     
-    This decorator applies gold layer-specific functionality:
-    - Data quality expectations
-    - PII masking verification
-    - Aggregation and metric computation
-    - Business rule validation
-    - Reference data validation and lookups
-    
     Args:
-        config_path: Path to configuration file.
-        config: Gold layer configuration object.
-        pii_detector: Optional PII detector implementation.
-        **kwargs: Additional configuration options.
+        config: Gold layer configuration object
+        config_path: Path to configuration file
+        pii_detector: PII detection implementation
+        **kwargs: Additional configuration options
+        
+    Returns:
+        Decorated function that applies gold layer functionality
     """
     def decorator(func: T) -> T:
+        """Inner decorator function."""
         # Get function name for registration
         func_name = func.__name__
 
-        # Resolve configuration early to get table name
+        # Resolve configuration
         config_obj = ConfigurationManager.resolve_config(
             layer="gold",
             config_path=config_path,
@@ -79,49 +65,37 @@ def gold(
         # Get table properties from DLTIntegration
         dlt_integration = DLTIntegration()
         table_props = dlt_integration.prepare_table_properties(
-            catalog=config_obj.table.catalog,
-            schema=config_obj.table.schema_name,
-            table_name=config_obj.table.name,
-            comment=config_obj.table.description,
-            properties=config_obj.table.properties,
-            tags=config_obj.table.tags,
-            column_comments=config_obj.table.column_comments
+            table_config=config_obj.table,
+            layer=Layer.GOLD,
+            governance=config_obj.governance
         )
 
         @wraps(func)
         def wrapper(*args: Any, **inner_kwargs: Any) -> DataFrame:
-            # Initialize reference manager
-            ref_manager = ReferenceManager(config_obj)
-            
-            # Add reference manager to function context
-            inner_kwargs["ref_manager"] = ref_manager
-
-            # Get the DataFrame from the function
+            # Get DataFrame from decorated function
             df = func(*args, **inner_kwargs)
 
-            # Apply expectations and metrics if configured
-            if config_obj.validate:
-                df = dlt_integration.add_expectations(df, config_obj.validate)
+            # Apply PII verification if configured
+            if config_obj.pii_verification and pii_detector:
+                df = pii_detector.detect(df)
+
+            # Apply aggregation if configured
+            if config_obj.aggregation:
+                # TODO: Implement aggregation logic
+                pass
+
+            # Apply business rules if configured
+            if config_obj.business_rules:
+                # TODO: Implement business rule validation
+                pass
+
+            # Apply expectations if configured
+            if config_obj.validations:
+                df = dlt_integration.add_expectations(df, config_obj.validations)
+
+            # Apply metrics if configured
             if config_obj.metrics:
                 df = dlt_integration.add_quality_metrics(df, config_obj.metrics)
-
-            # Verify PII masking if enabled
-            if config_obj.verify_pii_masking:
-                # Use provided detector or default to GDPRValidator
-                detector = pii_detector or GDPRValidator([])
-                pii_columns = detector.detect_pii(df)
-                
-                if any(cols for cols in pii_columns.values()):
-                    # Found unmasked PII data in gold layer
-                    raise ValueError(
-                        "Detected unmasked PII data in gold layer. Ensure all PII is "
-                        "properly masked in the silver layer. Detected columns: " +
-                        ", ".join(
-                            f"{col} ({pii_type})"
-                            for pii_type, cols in pii_columns.items()
-                            for col in cols
-                        )
-                    )
 
             return df
 
@@ -141,8 +115,7 @@ def gold(
                     "metrics",
                     "pii_verification",
                     "aggregation",
-                    "business_rules",
-                    "reference_data"
+                    "business_rules"
                 ]
             },
             decorator_type="dlt_layer"

@@ -9,11 +9,12 @@ This decorator applies bronze layer-specific functionality including:
 """
 from functools import wraps
 from typing import Any, Callable, Optional, Protocol, TypeVar
+
 from pyspark.sql import DataFrame
+import dlt
 
 from dlt_framework.core import DLTIntegration, DecoratorRegistry
 from dlt_framework.config import BronzeConfig, ConfigurationManager, Layer
-import dlt
 
 
 # Get singleton registry instance
@@ -22,15 +23,8 @@ registry = DecoratorRegistry()
 
 class PIIDetector(Protocol):
     """Protocol for PII detection implementations."""
-    def detect_pii(self, df: DataFrame) -> dict[str, list[str]]:
-        """Detect PII in the DataFrame.
-        
-        Args:
-            df: The DataFrame to analyze.
-            
-        Returns:
-            A dictionary mapping PII types to lists of column names containing that type.
-        """
+    def detect(self, df: DataFrame) -> DataFrame:
+        """Detect PII in DataFrame."""
         ...
 
 
@@ -47,21 +41,21 @@ def bronze(
     """Bronze layer decorator.
     
     Args:
-        config: Bronze layer configuration object.
-        config_path: Path to configuration file.
-        pii_detector: Optional PII detector implementation.
-        **kwargs: Additional configuration options.
+        config: Bronze layer configuration object
+        config_path: Path to configuration file
+        pii_detector: PII detection implementation
+        **kwargs: Additional configuration options
         
     Returns:
-        Decorated function that applies bronze layer functionality.
+        Decorated function that applies bronze layer functionality
     """
     def decorator(func: T) -> T:
         """Inner decorator function."""
         # Get function name for registration
         func_name = func.__name__
 
-        # Resolve configuration early to get table name
-        resolved_config = ConfigurationManager.resolve_config(
+        # Resolve configuration
+        config_obj = ConfigurationManager.resolve_config(
             layer="bronze",
             config_path=config_path,
             config_obj=config,
@@ -71,38 +65,37 @@ def bronze(
         # Get table properties from DLTIntegration
         dlt_integration = DLTIntegration()
         table_props = dlt_integration.prepare_table_properties(
-            table_config=resolved_config.table,
+            table_config=config_obj.table,
             layer=Layer.BRONZE,
-            governance=resolved_config.governance
+            governance=config_obj.governance
         )
 
         @wraps(func)
         def wrapper(*args: Any, **inner_kwargs: Any) -> DataFrame:
-            """Wrapper function that applies bronze layer functionality."""
             # Get DataFrame from decorated function
             df = func(*args, **inner_kwargs)
 
-            # Apply expectations if configured
-            if resolved_config.validations:
-                df = dlt_integration.add_expectations(df, resolved_config.validations)
+            # Apply PII detection if configured
+            if config_obj.pii_detection and pii_detector:
+                df = pii_detector.detect(df)
 
-            # Apply metrics if configured
-            if resolved_config.metrics:
-                df = dlt_integration.add_quality_metrics(df, resolved_config.metrics)
+            # Apply schema evolution if configured
+            if config_obj.schema_evolution:
+                # TODO: Implement schema evolution logic
+                pass
 
-            # Detect PII if enabled
-            if resolved_config.governance and resolved_config.governance.pii_detection and pii_detector:
-                pii_detector.detect_pii(df)
-
-            # Handle quarantine if enabled
-            if resolved_config.quarantine:
+            # Apply quarantine if configured
+            if config_obj.quarantine:
                 # TODO: Implement quarantine logic
                 pass
 
-            # Handle schema evolution if enabled
-            if resolved_config.governance and resolved_config.governance.schema_evolution:
-                # TODO: Implement schema evolution logic
-                pass
+            # Apply expectations if configured
+            if config_obj.validations:
+                df = dlt_integration.add_expectations(df, config_obj.validations)
+
+            # Apply metrics if configured
+            if config_obj.metrics:
+                df = dlt_integration.add_quality_metrics(df, config_obj.metrics)
 
             return df
 
@@ -121,8 +114,8 @@ def bronze(
                     "data_quality",
                     "metrics",
                     "pii_detection",
-                    "quarantine",
-                    "schema_evolution"
+                    "schema_evolution",
+                    "quarantine"
                 ]
             },
             decorator_type="dlt_layer"

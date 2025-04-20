@@ -12,9 +12,8 @@ from typing import Any, Callable, Optional, TypeVar
 from pyspark.sql import DataFrame
 import dlt
 
-from dlt_framework.core import DLTIntegration, DecoratorRegistry
+from dlt_framework.core import DLTIntegration, DecoratorRegistry, ReferenceManager
 from dlt_framework.config import SilverConfig, ConfigurationManager, Layer
-from dlt_framework.reference import ReferenceManager
 
 
 # Get singleton registry instance
