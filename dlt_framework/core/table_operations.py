@@ -1,117 +1,127 @@
-"""Table operations for quarantine functionality.
+"""Table operations for the DLT Medallion Framework."""
 
-This module provides functions for creating and managing quarantine tables.
-"""
+from typing import Optional, Dict, Any, List
+from datetime import datetime
 
-from typing import Dict, List, Optional, Union
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
+import dlt
 
-from pyspark.sql import SparkSession, DataFrame
-
-from dlt_framework.config import QuarantineConfig
-from .schema import get_quarantine_schema_from_config
-
-
-def create_quarantine_table(
-    table_name: str,
-    config: Optional[QuarantineConfig] = None
-) -> None:
-    """Create a quarantine table if it doesn't exist.
-    
-    Args:
-        table_name: Name of the quarantine table to create
-        config: Optional configuration for custom column names
-        
-    Raises:
-        RuntimeError: If no active Spark session is found
-    """
-    # Get active Spark session
-    spark = SparkSession.getActiveSession()
-    if not spark:
-        raise RuntimeError("No active Spark session found")
-    
-    # Determine schema based on config
-    if config:
-        schema = get_quarantine_schema_from_config(config)
-    else:
-        # Use default schema
-        from .schema import get_quarantine_metadata_schema
-        schema = get_quarantine_metadata_schema()
-    
-    # Create empty DataFrame with the schema
-    empty_df = spark.createDataFrame([], schema)
-    
-    # Create the quarantine table using dlt.create_table
-    dlt.create_table(
-        name=table_name,
-        comment="Quarantined records that failed data quality expectations",
-        path=None,  # Let DLT manage the path
-        partition_cols=None,
-        table_properties={
-            "quality": "bronze",  # Mark as bronze since it's raw rejected data
-            "purpose": "data_quality_quarantine"
-        }
-    )
-    
-    # Write initial empty schema
-    sequence_by = config.timestamp_column if config else "quarantine_timestamp"
-    dlt.apply_changes(
-        target=table_name,
-        source=empty_df,
-        keys=[],
-        sequence_by=sequence_by
-    )
-
-
-def write_to_quarantine_table(
-    df: DataFrame,
-    table_name: str,
-    sequence_by: str = "quarantine_timestamp"
-) -> None:
-    """Write records to the quarantine table.
-    
-    Args:
-        df: DataFrame containing records to quarantine
-        table_name: Name of the quarantine table
-        sequence_by: Column name to sequence by
-    """
-    if df.isEmpty():
-        return  # Nothing to write
-    
-    dlt.apply_changes(
-        target=table_name,
-        source=df,
-        keys=[],  # No natural keys for quarantine records
-        sequence_by=sequence_by,
-        ignore_null_updates=True
-    )
+from ..config import QuarantineConfig
 
 
 def table_exists(table_name: str) -> bool:
     """Check if a table exists.
     
     Args:
-        table_name: Name of the table to check
+        table_name: Fully qualified table name
         
     Returns:
-        True if the table exists, False otherwise
-        
-    Raises:
-        RuntimeError: If no active Spark session is found
+        True if table exists, False otherwise
     """
-    spark = SparkSession.getActiveSession()
-    if not spark:
-        raise RuntimeError("No active Spark session found")
-    
-    # Parse catalog and schema from table name
-    parts = table_name.split('.')
-    if len(parts) != 3:
-        raise ValueError(f"table_name must be fully qualified (catalog.schema.table), got {table_name}")
-    
-    catalog, schema, table = parts
-    
-    # Check if table exists
     try:
-        tables = spark.sql(f"SHOW TABLES IN {catalog}.{schema}")
-        return tables.filter(tables.tableName == table).count() > 0
+        dlt.read(table_name)
+        return True
     except Exception:
         return False
+
+
+def create_quarantine_table(table_name: str, config: QuarantineConfig) -> None:
+    """Create a quarantine table with the required schema.
+    
+    Args:
+        table_name: Fully qualified table name
+        config: Quarantine configuration
+    """
+    # Create empty DataFrame with quarantine metadata schema
+    metadata_schema = T.StructType([
+        T.StructField(config.error_column, T.StringType(), True),
+        T.StructField(config.timestamp_column, T.TimestampType(), True),
+        T.StructField(config.batch_id_column, T.StringType(), True),
+        T.StructField(config.source_column, T.StringType(), True),
+        T.StructField(
+            config.failed_expectations_column,
+            T.ArrayType(
+                T.StructType([
+                    T.StructField("name", T.StringType(), True),
+                    T.StructField("constraint", T.StringType(), True)
+                ])
+            ),
+            True
+        )
+    ])
+
+    # Create empty DataFrame with a dummy key column for DLT
+    empty_df = dlt.get_spark_session().createDataFrame(
+        [(
+            1,  # dummy_key
+            None,  # error
+            datetime.now(),  # timestamp
+            None,  # batch_id
+            None,  # source
+            []  # failed_expectations
+        )],
+        T.StructType([
+            T.StructField("_quarantine_key", T.IntegerType(), False),  # Required key column
+            *metadata_schema.fields
+        ])
+    )
+
+    # Create table properties
+    table_properties = {
+        "delta.autoOptimize.optimizeWrite": "true",
+        "delta.autoOptimize.autoCompact": "true",
+        "delta.enableChangeDataFeed": "true",
+        "delta.columnMapping.mode": "name",
+        "delta.minReaderVersion": "2",
+        "delta.minWriterVersion": "5"
+    }
+
+    # Create the table using DLT
+    dlt.create_streaming_table(
+        name=table_name.split(".")[-1],
+        comment="Quarantine table for invalid records",
+        table_properties=table_properties,
+        partition_cols=[config.timestamp_column] if config.timestamp_column else None
+    )
+
+    # Initialize with empty DataFrame
+    dlt.apply_changes(
+        target=table_name,
+        source=empty_df,
+        keys=["_quarantine_key"],  # Use dummy key column
+        sequence_by=config.timestamp_column,
+        stored_as_scd_type=2
+    )
+
+
+def write_to_quarantine_table(
+    df: DataFrame,
+    table_name: str,
+    timestamp_column: str,
+    batch_id: Optional[str] = None
+) -> None:
+    """Write records to a quarantine table.
+    
+    Args:
+        df: DataFrame containing records to quarantine
+        table_name: Fully qualified table name
+        timestamp_column: Name of timestamp column for sequencing
+        batch_id: Optional batch identifier
+    """
+    # Add dummy key column if not present
+    if "_quarantine_key" not in df.columns:
+        df = df.withColumn(
+            "_quarantine_key",
+            F.monotonically_increasing_id()
+        )
+
+    # Write to quarantine table
+    dlt.apply_changes(
+        target=table_name,
+        source=df,
+        keys=["_quarantine_key"],
+        sequence_by=timestamp_column,
+        stored_as_scd_type=2
+    )
