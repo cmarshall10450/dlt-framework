@@ -4,40 +4,21 @@ This decorator applies silver layer-specific functionality including:
 - Data quality expectations
 - Metrics computation
 - PII masking
-- SCD handling
-- Deduplication
-- Data normalization
-- Reference data validation and lookups
+- Reference data validation
 """
 from functools import wraps
-from pathlib import Path
-from typing import Any, Callable, Optional, Protocol, TypeVar, Union, cast
+from typing import Any, Callable, Optional, TypeVar
 
 from pyspark.sql import DataFrame
+import dlt
 
-from dlt_framework.core import DLTIntegration, DecoratorRegistry, ReferenceManager
-from dlt_framework.config import ConfigurationManager, SilverConfig
-from dlt_framework.validation import GDPRValidator, GDPRField
+from dlt_framework.core import DLTIntegration, DecoratorRegistry
+from dlt_framework.config import SilverConfig, ConfigurationManager, Layer
+from dlt_framework.reference import ReferenceManager
 
 
 # Get singleton registry instance
 registry = DecoratorRegistry()
-
-
-class PIIMasker(Protocol):
-    """Protocol for PII masking implementations."""
-    
-    def mask_pii(self, df: DataFrame, columns: dict[str, str]) -> DataFrame:
-        """Mask PII in specified columns.
-        
-        Args:
-            df: The DataFrame to mask.
-            columns: Dictionary mapping column names to masking strategies.
-            
-        Returns:
-            DataFrame with masked PII columns.
-        """
-        ...
 
 
 # Type variable for functions that return a DataFrame
@@ -45,31 +26,26 @@ T = TypeVar("T", bound=Callable[..., DataFrame])
 
 
 def silver(
-    config_path: Optional[Union[str, Path]] = None,
     config: Optional[SilverConfig] = None,
-    pii_masker: Optional[PIIMasker] = None,
+    config_path: Optional[str] = None,
     **kwargs: Any,
 ) -> Callable[[T], T]:
     """Silver layer decorator.
     
-    This decorator applies silver layer-specific functionality:
-    - Data quality expectations
-    - PII masking and encryption
-    - Data standardization and cleansing
-    - SCD handling for dimension tables
-    - Reference data validation and lookups
-    
     Args:
-        config_path: Path to configuration file.
-        config: Silver layer configuration object.
-        pii_masker: Optional PII masker implementation.
-        **kwargs: Additional configuration options.
+        config: Silver layer configuration object
+        config_path: Path to configuration file
+        **kwargs: Additional configuration options
+        
+    Returns:
+        Decorated function that applies silver layer functionality
     """
     def decorator(func: T) -> T:
+        """Inner decorator function."""
         # Get function name for registration
         func_name = func.__name__
 
-        # Resolve configuration early to get table name
+        # Resolve configuration
         config_obj = ConfigurationManager.resolve_config(
             layer="silver",
             config_path=config_path,
@@ -80,64 +56,45 @@ def silver(
         # Get table properties from DLTIntegration
         dlt_integration = DLTIntegration()
         table_props = dlt_integration.prepare_table_properties(
-            catalog=config_obj.table.catalog,
-            schema=config_obj.table.schema_name,
-            table_name=config_obj.table.name,
-            comment=config_obj.table.description,
-            properties=config_obj.table.properties,
-            tags=config_obj.table.tags,
-            column_comments=config_obj.table.column_comments
+            table_config=config_obj.table,
+            layer=Layer.SILVER,
+            governance=config_obj.governance
         )
 
         @wraps(func)
         def wrapper(*args: Any, **inner_kwargs: Any) -> DataFrame:
             # Initialize reference manager
             ref_manager = ReferenceManager(config_obj)
-            
-            # Add reference manager to function context
-            inner_kwargs["ref_manager"] = ref_manager
 
-            # Get the DataFrame from the function
+            # Get DataFrame from decorated function
             df = func(*args, **inner_kwargs)
 
-            # Apply expectations and metrics if configured
-            if config_obj.validate:
-                df = dlt_integration.add_expectations(df, config_obj.validate)
-            if config_obj.metrics:
-                df = dlt_integration.add_quality_metrics(df, config_obj.metrics)
+            # Apply reference data validation if configured
+            if config_obj.references:
+                df = ref_manager.validate_references(df)
 
-            # Apply PII masking if enabled
-            if config_obj.masking_enabled:
-                # Get PII detection results from bronze layer
-                pii_fields = []
-                for column in df.columns:
-                    if column in config_obj.masking_overrides:
-                        pii_fields.append(GDPRField(
-                            name=column,
-                            pii_type="custom",
-                            masking_strategy=config_obj.masking_overrides[column]
-                        ))
-                
-                # Apply masking based on configured fields
-                if pii_fields:
-                    # Use provided masker or default to GDPRValidator
-                    masker = pii_masker or GDPRValidator(pii_fields)
-                    df = masker.mask_pii(df, config_obj.masking_overrides)
-
-            # Handle SCD if enabled
-            if config_obj.scd:
-                # TODO: Implement SCD logic
-                pass
-
-            # Handle deduplication if enabled
+            # Apply deduplication if enabled
             if config_obj.deduplication:
                 # TODO: Implement deduplication logic
                 pass
 
-            # Handle normalization if enabled
+            # Apply normalization if enabled
             if config_obj.normalization:
                 # TODO: Implement normalization logic
                 pass
+
+            # Apply SCD logic if configured
+            if config_obj.scd:
+                # TODO: Implement SCD logic
+                pass
+
+            # Apply expectations if configured
+            if config_obj.validations:
+                df = dlt_integration.add_expectations(df, config_obj.validations)
+
+            # Apply metrics if configured
+            if config_obj.metrics:
+                df = dlt_integration.add_quality_metrics(df, config_obj.metrics)
 
             return df
 
@@ -155,11 +112,10 @@ def silver(
                 "features": [
                     "data_quality",
                     "metrics",
-                    "pii_masking",
-                    "scd",
+                    "reference_validation",
                     "deduplication",
                     "normalization",
-                    "reference_data"
+                    "scd"
                 ]
             },
             decorator_type="dlt_layer"
