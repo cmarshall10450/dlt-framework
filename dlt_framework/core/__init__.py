@@ -7,6 +7,7 @@ from .quarantine_manager import QuarantineManager
 from .reference_manager import ReferenceManager
 from .schema import get_quarantine_metadata_schema, get_quarantine_schema_from_config
 from .templates import Template, TemplateManager
+from .pii import PIIDetector, DefaultPIIDetector
 
 __all__ = [
     "DecoratorRegistry", 
@@ -18,4 +19,6 @@ __all__ = [
     "TemplateManager",
     "get_quarantine_metadata_schema", 
     "get_quarantine_schema_from_config",
+    "PIIDetector",
+    "DefaultPIIDetector"
 ] 
