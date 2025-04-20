@@ -28,7 +28,8 @@ from dlt_framework.config import (
     Metric,
     UnityTableConfig,
     QuarantineConfig,
-    GovernanceConfig
+    GovernanceConfig,
+    ReferenceConfig
 )
 from dlt_framework.decorators import bronze, silver, gold
 
@@ -162,11 +163,25 @@ gold_config = GoldConfig(
         schemaName="gold",
         description="Aggregated transaction metrics with dimension references"
     ),
-    references={
-        "customer_id": "dim_customers.id",
-        "product_id": "dim_products.id"
+    references=[
+        ReferenceConfig(
+            name="customers",
+            table_name="demo.gold.dim_customers",
+            join_keys={"customer_id": "id"},
+            lookup_columns=["id", "name", "email"]
+        ),
+        ReferenceConfig(
+            name="products",
+            table_name="demo.gold.dim_products",
+            join_keys={"product_id": "id"},
+            lookup_columns=["id", "name", "category"]
+        )
+    ],
+    dimensions={
+        "customer": "customer_id",
+        "product": "product_id",
+        "date": "transaction_date"
     },
-    dimensions=["customer", "product", "date"],
     validations=[
         Expectation(
             name="complete_dimensions",
