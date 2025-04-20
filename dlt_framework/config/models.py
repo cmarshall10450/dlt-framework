@@ -311,6 +311,7 @@ class UnityTableConfig(ConfigBaseModel):
     description: Optional[str] = Field(None, description="Description of the table's purpose")
     properties: Dict[DeltaProperty, Any] = Field(default_factory=dict, description="Delta table properties")
     column_comments: Dict[str, str] = Field(default_factory=dict, description="Column-level comments")
+    tags: Dict[str, str] = Field(default_factory=dict, description="Table tags")
 
     @validator("name", "catalog", "schema_name")
     def validate_identifiers(cls, v, field):
@@ -331,6 +332,62 @@ class UnityTableConfig(ConfigBaseModel):
     def get_full_table_name(self) -> str:
         """Get the fully qualified table name."""
         return f"{self.catalog}.{self.schema_name}.{self.name}"
+
+    def get_governance_tags(self, layer: Layer, governance: Optional[GovernanceConfig] = None) -> Dict[str, str]:
+        """Generate governance tags based on configuration.
+        
+        Args:
+            layer: The layer this table belongs to
+            governance: Optional governance configuration
+            
+        Returns:
+            Dictionary of tags for governance and discoverability
+        """
+        # Start with user-defined tags
+        all_tags = dict(self.tags)
+        
+        # Add basic table metadata tags
+        all_tags.update({
+            "layer": layer.value,
+            "catalog": self.catalog,
+            "schema": self.schema_name,
+            "table": self.name,
+            "full_name": self.get_full_table_name()
+        })
+        
+        # Add governance-related tags if configuration is provided
+        if governance:
+            if governance.owner:
+                all_tags["owner"] = governance.owner
+            if governance.steward:
+                all_tags["steward"] = governance.steward
+            if governance.pii_detection:
+                all_tags["pii_detection"] = "enabled"
+            if governance.masking_enabled:
+                all_tags["data_masking"] = "enabled"
+            if governance.retention:
+                all_tags["retention_policy"] = governance.retention
+            
+            # Add data classification tags
+            if governance.classification:
+                all_tags["highest_classification"] = max(
+                    (c.value for c in governance.classification.values()),
+                    default="unclassified"
+                )
+                
+            # Add governance tags
+            all_tags.update(governance.tags)
+        
+        # Add schema evolution tag
+        if governance and governance.schema_evolution:
+            all_tags["schema_evolution"] = "enabled"
+        
+        # Add Delta table property indicators
+        for prop in self.properties:
+            if isinstance(prop, DeltaProperty):
+                all_tags[f"delta_{prop.name.lower()}"] = "enabled"
+        
+        return all_tags
 
 
 class ReferenceConfig(ConfigBaseModel):

@@ -6,7 +6,14 @@ import dlt
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import expr
 
-from ..config.models import Expectation, Metric, ExpectationAction
+from ..config.models import (
+    Expectation, 
+    Metric, 
+    ExpectationAction, 
+    Layer, 
+    UnityTableConfig, 
+    GovernanceConfig
+)
 from .exceptions import DLTFrameworkError
 from .quarantine_manager import QuarantineManager
 
@@ -16,13 +23,9 @@ class DLTIntegration:
 
     @staticmethod
     def prepare_table_properties(
-        catalog: Optional[str] = None,
-        schema: Optional[str] = None,
-        table_name: Optional[str] = None,
-        column_comments: Optional[Dict[str, str]] = None,
-        tags: Optional[Dict[str, str]] = None,
-        comment: Optional[str] = None,
-        properties: Optional[Dict[str, Any]] = None,
+        table_config: UnityTableConfig,
+        layer: Layer,
+        governance: Optional[GovernanceConfig] = None,
         partition_cols: Optional[List[str]] = None,
         cluster_by: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
@@ -30,56 +33,50 @@ class DLTIntegration:
         Prepare properties for @dlt.table decorator.
 
         Args:
-            catalog: Optional catalog name
-            schema: Optional schema name
-            table_name: Optional table name
-            column_comments: Optional dictionary of column comments
-            tags: Optional dictionary of Unity Catalog tags
-            comment: Optional table comment
-            properties: Optional dictionary of additional table properties
+            table_config: Unity Catalog table configuration
+            layer: The layer this table belongs to
+            governance: Optional governance configuration
             partition_cols: Optional list of partition columns
             cluster_by: Optional list of clustering columns
 
         Returns:
             Dictionary of properties for @dlt.table decorator
         """
-        table_config = {}
+        table_props = {}
 
         # Set basic table properties
-        if table_name:
-            table_config["name"] = table_name
-        if comment:
-            table_config["comment"] = comment
+        table_props["name"] = table_config.name
+        if table_config.description:
+            table_props["comment"] = table_config.description
         if partition_cols:
-            table_config["partition_cols"] = partition_cols
+            table_props["partition_cols"] = partition_cols
         if cluster_by:
-            table_config["cluster_by"] = cluster_by
+            table_props["cluster_by"] = cluster_by
 
         # Prepare table properties
         table_properties = {}
 
         # Add Unity Catalog metadata
-        if catalog and schema:
-            table_properties["target"] = f"{catalog}.{schema}.{table_name}"
+        table_properties["target"] = f"{table_config.catalog}.{table_config.schema_name}.{table_config.name}"
 
         # Add column comments
-        if column_comments:
-            for column, comment in column_comments.items():
+        if table_config.column_comments:
+            for column, comment in table_config.column_comments.items():
                 table_properties[f"column_comment.{column}"] = comment
 
-        # Add tags
-        if tags:
-            for key, value in tags.items():
-                table_properties[f"tag.{key}"] = value
+        # Generate and add governance tags
+        governance_tags = table_config.get_governance_tags(layer, governance)
+        for key, value in governance_tags.items():
+            table_properties[f"tag.{key}"] = str(value)
 
-        # Add additional properties
-        if properties:
-            table_properties.update({key: str(value) for key, value in properties.items()})
+        # Add Delta properties
+        if table_config.properties:
+            table_properties.update({key: str(value) for key, value in table_config.properties.items()})
 
         if table_properties:
-            table_config["table_properties"] = table_properties
+            table_props["table_properties"] = table_properties
 
-        return table_config
+        return table_props
 
     @staticmethod
     def add_expectations(
