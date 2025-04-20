@@ -6,7 +6,10 @@ from typing import Any, Dict, List, Optional, Union
 import yaml
 from pydantic import BaseModel, Field, root_validator
 
-from .config import Config, Expectation, Layer, Metric, TableConfig
+from ..config.models import (
+    Layer, Expectation, Metric, UnityTableConfig as TableConfig,
+    BronzeConfig, SilverConfig, GoldConfig
+)
 from .exceptions import TemplateError
 
 
@@ -109,12 +112,18 @@ class TemplateManager:
             raise TemplateError(f"Template not found: {name}")
         return self._templates[name]
 
-    def apply_template(self, template_ref: Union[str, TemplateRef], base_config: Optional[Config] = None) -> Config:
+    def apply_template(
+        self, 
+        template_ref: Union[str, TemplateRef], 
+        layer: Layer,
+        base_config: Optional[Union[BronzeConfig, SilverConfig, GoldConfig]] = None
+    ) -> Union[BronzeConfig, SilverConfig, GoldConfig]:
         """
         Apply a template to create or update a configuration.
 
         Args:
             template_ref: Template name or TemplateRef object
+            layer: Layer type (bronze, silver, gold)
             base_config: Optional base configuration to update
 
         Returns:
@@ -131,8 +140,17 @@ class TemplateManager:
             # Get template
             template = self.get_template(template_ref.name)
             
-            # Start with base config or empty config
-            config_dict = base_config.dict() if base_config else {"table": {}}
+            # Start with base config or create new based on layer
+            if base_config:
+                config_dict = base_config.dict()
+            else:
+                config_dict = {"table": {}}
+                if layer == Layer.BRONZE:
+                    config_dict = BronzeConfig(**config_dict).dict()
+                elif layer == Layer.SILVER:
+                    config_dict = SilverConfig(**config_dict).dict()
+                else:  # GOLD
+                    config_dict = GoldConfig(**config_dict).dict()
             
             # Apply parent template if exists
             if template.extends:
@@ -146,7 +164,14 @@ class TemplateManager:
             if template_ref.overrides:
                 config_dict = self._merge_dicts(config_dict, template_ref.overrides)
             
-            return Config(**config_dict)
+            # Create appropriate config object based on layer
+            if layer == Layer.BRONZE:
+                return BronzeConfig(**config_dict)
+            elif layer == Layer.SILVER:
+                return SilverConfig(**config_dict)
+            else:  # GOLD
+                return GoldConfig(**config_dict)
+
         except Exception as e:
             raise TemplateError(f"Failed to apply template {template_ref.name}: {str(e)}")
 
@@ -184,22 +209,15 @@ class TemplateManager:
         return config_dict
 
     def _merge_dicts(self, base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-        """Merge two dictionaries recursively."""
-        merged = base.copy()
+        """Deep merge two dictionaries."""
+        result = base.copy()
         for key, value in override.items():
             if (
-                key in merged
-                and isinstance(merged[key], dict)
-                and isinstance(value, dict)
+                key in result and 
+                isinstance(result[key], dict) and 
+                isinstance(value, dict)
             ):
-                merged[key] = self._merge_dicts(merged[key], value)
-            elif (
-                key in merged
-                and isinstance(merged[key], list)
-                and isinstance(value, list)
-            ):
-                # For lists, we append new items
-                merged[key].extend(value)
+                result[key] = self._merge_dicts(result[key], value)
             else:
-                merged[key] = value
-        return merged 
+                result[key] = value
+        return result 

@@ -7,7 +7,7 @@ from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 
-from dlt_framework.validation.quarantine import QuarantineConfig, QuarantineManager
+from dlt_framework.core.quarantine import QuarantineConfig, QuarantineManager
 
 
 @pytest.fixture
@@ -248,4 +248,55 @@ def test_error_summary(spark_session, quarantine_config, sample_df):
     
     negative_value_error = next(row for row in summary_rows 
                               if row[quarantine_config.error_column] == "Negative value")
-    assert negative_value_error["error_count"] == 1 
+    assert negative_value_error["error_count"] == 1
+
+
+def test_prepare_quarantine_records_with_override_source(spark_session, sample_df):
+    """Test preparing quarantine records with an overridden source table name."""
+    config = QuarantineConfig(
+        enabled=True,
+        source_table_name="default_source"
+    )
+    manager = QuarantineManager(config)
+    
+    # Test with override source
+    override_source = "override_source"
+    result = manager.prepare_quarantine_records(
+        sample_df,
+        "test error",
+        source_table_name=override_source
+    )
+    
+    # Verify override source is used
+    source_value = result.select(config.source_column).collect()[0][0]
+    assert source_value == override_source
+
+
+def test_prepare_quarantine_records_with_none_source(spark_session, sample_df):
+    """Test preparing quarantine records with no source table name."""
+    config = QuarantineConfig(
+        enabled=True,
+        source_table_name=None
+    )
+    manager = QuarantineManager(config)
+    
+    # Test with no source
+    result = manager.prepare_quarantine_records(
+        sample_df,
+        "test error"
+    )
+    
+    # Verify source is None
+    source_value = result.select(config.source_column).collect()[0][0]
+    assert source_value is None
+    
+    # Test with explicit None override
+    result = manager.prepare_quarantine_records(
+        sample_df,
+        "test error",
+        source_table_name=None
+    )
+    
+    # Verify source remains None
+    source_value = result.select(config.source_column).collect()[0][0]
+    assert source_value is None 

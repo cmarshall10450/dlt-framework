@@ -6,7 +6,10 @@ import dlt
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import expr
 
-from .config_models import Expectation, Metric, ExpectationAction
+from ..config.models import (
+    Expectation, Metric, ExpectationAction,
+    SourceFormat
+)
 from .exceptions import DLTFrameworkError
 from .quarantine import QuarantineManager
 
@@ -17,7 +20,7 @@ class DLTIntegration:
     @staticmethod
     def configure_auto_loader(
         source_path: str,
-        format: str = "cloudFiles",
+        format: Union[str, SourceFormat] = SourceFormat.CLOUD_FILES,
         schema_location: Optional[str] = None,
         schema_evolution: bool = True,
         rescue_data: bool = True,
@@ -40,13 +43,16 @@ class DLTIntegration:
         Example:
             config = DLTIntegration.configure_auto_loader(
                 source_path="s3://bucket/path",
-                format="cloudFiles",
+                format=SourceFormat.JSON,
                 cloudFiles={"format": "json"},
                 schema_evolution=True
             )
         """
+        # Convert format to string if it's an enum
+        format_str = format.value if isinstance(format, SourceFormat) else format
+
         auto_loader_config = {
-            "format": format,
+            "format": format_str,
             "path": source_path,
             "cloudFiles.schemaEvolution.enabled": str(schema_evolution).lower(),
             "cloudFiles.rescueDataOnError": str(rescue_data).lower(),
