@@ -1,5 +1,4 @@
-# COMMAND ----------
-# MAGIC %pip install  pyyaml
+# MAGIC %pip install pyspark pyyaml
 
 # COMMAND ----------
 
@@ -8,6 +7,8 @@
 # MAGIC # DLT Medallion Framework Validation
 # MAGIC 
 # MAGIC This notebook demonstrates the usage of the DLT Medallion Framework with both YAML and object-based configuration.
+
+# COMMAND ----------
 
 from datetime import datetime
 from pathlib import Path
