@@ -98,170 +98,24 @@ class DLTIntegration:
 
         return table_props
 
-    def apply_expectations_to_dataframe(
-        self,
-        df: DataFrame,
-        expectations: List[Expectation],
-        source_table: Optional[str] = None
-    ) -> DataFrame:
-        """
-        Directly apply expectations to a DataFrame without using decorators.
-        This is used for custom handling within layer wrapper functions.
-
-        Args:
-            df: Input DataFrame to process
-            expectations: List of expectations to apply
-            source_table: Optional source table name for quarantine
-
-        Returns:
-            Processed DataFrame with expectations applied
-        """
-        if not expectations:
-            return df
-
-        # Group expectations by action
-        action_groups = defaultdict(list)
-        for exp in expectations:
-            action_groups[exp.action].append(exp)
-
-        result_df = df
-
-        # Handle quarantine expectations first if configured
-        quarantine_exps = action_groups.get(ExpectationAction.QUARANTINE, [])
-        if quarantine_exps and self._quarantine_manager:
-            valid_df, _ = self._quarantine_manager.quarantine_records_by_expectations(
-                result_df,
-                quarantine_exps,
-                batch_id=None
-            )
-            result_df = valid_df
-
-        # Apply non-quarantine expectations using DLT functions
-        for action, exps in action_groups.items():
-            if action == ExpectationAction.QUARANTINE:
-                continue
-
-            # Create expectation dictionary
-            exp_dict = {exp.name: exp.constraint for exp in exps}
-            
-            # Apply expectations based on action
-            if action == ExpectationAction.DROP:
-                result_df = dlt.expect_or_drop(exp.name, exp.constraint)(lambda df: df)(result_df)
-            elif action == ExpectationAction.FAIL:
-                result_df = dlt.expect_or_fail(exp.name, exp.constraint)(lambda df: df)(result_df)
-            else:  # Default to warn
-                result_df = dlt.expect(exp.name, exp.constraint)(lambda df: df)(result_df)
-
-        return result_df
-
-    def get_expectation_decorators(
-        self,
-        expectations: List[Expectation]
-    ) -> List[Callable]:
-        """
-        Get a list of DLT expectation decorators for standard expectations (non-quarantine).
-        
-        Args:
-            expectations: List of expectations to convert to decorators
-            
-        Returns:
-            List of decorator functions to apply
-        """
-        if not expectations:
-            return []
-
-        decorators = []
-        non_quarantine_exps = defaultdict(dict)
-        
-        # Group non-quarantine expectations by action
-        for exp in expectations:
-            # Convert string action to enum if needed
-            action = (
-                ExpectationAction(exp.action) 
-                if isinstance(exp.action, str) 
-                else exp.action
-            )
-            
-            if action != ExpectationAction.QUARANTINE:
-                non_quarantine_exps[action][exp.name] = exp.constraint
-
-        # Create decorators for each action type
-        if ExpectationAction.DROP in non_quarantine_exps:
-            decorators.append(
-                dlt.expect_all_or_drop(non_quarantine_exps[ExpectationAction.DROP])
-            )
-
-        if ExpectationAction.FAIL in non_quarantine_exps:
-            decorators.append(
-                dlt.expect_all_or_fail(non_quarantine_exps[ExpectationAction.FAIL])
-            )
-
-        # For any other action type, use dlt.expect_all (warning-level expectations)
-        other_exps = {}
-        for action, exps in non_quarantine_exps.items():
-            if action not in (ExpectationAction.DROP, ExpectationAction.FAIL, ExpectationAction.QUARANTINE):
-                other_exps.update(exps)
-        
-        if other_exps:
-            decorators.append(dlt.expect_all(other_exps))
-
-        return decorators
-
-    def add_expectations(
-        self,
-        df: DataFrame,
-        expectations: List[Expectation],
-        source_table: Optional[str] = None,
-        quarantine_config: Optional[QuarantineConfig] = None
-    ) -> DataFrame:
-        """
-        Apply expectations to a DataFrame.
-        This method is maintained for backward compatibility but prefer using
-        get_expectation_decorators() and apply_expectations_to_dataframe() for more control.
-
-        Args:
-            df: Input DataFrame
-            expectations: List of expectations to apply
-            source_table: Optional source table name for quarantine
-            quarantine_config: Optional quarantine configuration
-
-        Returns:
-            DataFrame with expectations applied
-        """
-        if not expectations:
-            return df
-
-        # Initialize quarantine if config provided
-        if quarantine_config:
-            self.initialize_quarantine(quarantine_config)
-
-        # Apply expectations directly to DataFrame
-        return self.apply_expectations_to_dataframe(
-            df,
-            expectations,
-            source_table=source_table
-        )
-
     @staticmethod
-    def add_quality_metrics(metrics: List[Metric]) -> Any:
+    def create_quality_metrics_decorator(metrics: List[Metric]) -> Callable:
         """
-        Create DLT quality metric decorators to be applied to a transformation function.
-
+        Create a DLT decorator for quality metrics.
+        
         Args:
-            metrics: List of Metric objects
-
+            metrics: List of metrics to apply
+            
         Returns:
-            Function decorator that applies DLT quality metrics
+            Decorator function that applies the metrics
         """
         if not metrics:
             return lambda f: f
 
-        # Create metrics dictionary
         metric_dict = {
             metric.name: metric.value 
             for metric in metrics 
             if metric.name and metric.value
         }
-
-        # Apply all metrics in a single decorator
-        return lambda f: dlt.expect_all(metric_dict)(f) if metric_dict else f 
+        
+        return dlt.expect_all(metric_dict) if metric_dict else lambda f: f 

@@ -7,32 +7,265 @@ including storage, retrieval, and reprocessing capabilities within Databricks DL
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from datetime import datetime
 from functools import reduce
+import json
 
 from pyspark.sql import DataFrame, SparkSession, Column
 from pyspark.sql import functions as F
 import dlt
+from pyspark.sql.functions import (
+    array, struct, lit, current_timestamp, monotonically_increasing_id,
+    to_json, col, expr, window, date_trunc
+)
 
 from .table_operations import create_quarantine_table, write_to_quarantine_table, table_exists
 from dlt_framework.config import QuarantineConfig, Expectation
 
 
+class QuarantineConfig:
+    """Enhanced quarantine configuration with performance settings."""
+    def __init__(
+        self,
+        enabled: bool = True,
+        partition_by: Optional[List[str]] = None,
+        z_order_by: Optional[List[str]] = None,
+        batch_size: int = 100000,
+        optimize_write: bool = True,
+        auto_compact: bool = True,
+        broadcast_threshold: int = 10000000  # 10MB threshold for broadcast joins
+    ):
+        self.enabled = enabled
+        self.partition_by = partition_by or ["year", "month"]  # Default time-based partitioning
+        self.z_order_by = z_order_by or ["source_record_id", "quarantine_timestamp"]
+        self.batch_size = batch_size
+        self.optimize_write = optimize_write
+        self.auto_compact = auto_compact
+        self.broadcast_threshold = broadcast_threshold
+
+
 class QuarantineManager:
-    """Manages quarantined records that fail validation within DLT pipelines."""
-    
+    """Manages quarantine functionality for invalid records with optimized performance."""
+
     def __init__(self, config: QuarantineConfig):
-        """Initialize the quarantine manager.
+        """Initialize quarantine manager with performance settings."""
+        self.config = config
+        self._cached_reference_data = {}
+
+    def create_invalid_records_view(
+        self,
+        df: DataFrame,
+        expectations: List[Expectation],
+        source_table: str,
+        watermark_column: Optional[str] = None
+    ) -> Tuple[DataFrame, str]:
+        """Create an optimized streaming view of invalid records."""
+        if not expectations:
+            return df, ""
+
+        # Combine all validation conditions into a single evaluation
+        validation_conditions = []
+        validation_metadata = []
+        
+        for exp in expectations:
+            condition = expr(exp.constraint)
+            validation_conditions.append(condition)
+            validation_metadata.append(
+                struct(
+                    lit(exp.name).alias("name"),
+                    lit(exp.constraint).alias("constraint"),
+                    (~condition).alias("failed")
+                )
+            )
+
+        # Combine conditions efficiently
+        combined_condition = reduce(lambda x, y: x & y, validation_conditions)
+        
+        # Add validation metadata in a single pass
+        df_with_meta = df.withColumn(
+            "validation_meta",
+            struct(
+                current_timestamp().alias("quarantine_timestamp"),
+                lit(source_table).alias("source_table"),
+                array(validation_metadata).alias("failed_validations"),
+                monotonically_increasing_id().alias("version_id"),
+                # Add partition columns for better performance
+                date_trunc("year", current_timestamp()).alias("year"),
+                date_trunc("month", current_timestamp()).alias("month")
+            )
+        )
+
+        # Add watermark if specified
+        if watermark_column and watermark_column in df.columns:
+            df_with_meta = df_with_meta.withWatermark(watermark_column, "1 hour")
+
+        # Split valid and invalid records in a single pass
+        valid_records = df_with_meta.filter(combined_condition).drop("validation_meta")
+        invalid_records = df_with_meta.filter(~combined_condition)
+
+        # Create optimized view name
+        view_name = f"{source_table}_invalid_records"
+        
+        # Create DLT streaming view with optimizations
+        dlt.view(
+            name=view_name,
+            comment=f"Invalid records from {source_table}",
+            temporary=False,
+            partition_cols=self.config.partition_by,
+            table_properties={
+                "delta.autoOptimize.optimizeWrite": str(self.config.optimize_write).lower(),
+                "delta.autoOptimize.autoCompact": str(self.config.auto_compact).lower(),
+                "delta.tuneFileSizesForRewrites": "true",
+                "delta.targetFileSize": str(128 * 1024 * 1024)  # 128MB target file size
+            }
+        )(lambda: invalid_records)
+
+        return valid_records, view_name
+
+    def create_quarantine_table_function(
+        self,
+        source_table: str,
+        table_name: Optional[str] = None,
+        partition_columns: Optional[List[str]] = None
+    ) -> None:
+        """Create an optimized DLT table for quarantined records."""
+        invalid_records_view = f"{source_table}_invalid_records"
+        quarantine_table = table_name or f"{source_table}_quarantine"
+
+        # Define optimized table properties
+        table_properties = {
+            "quality": "quarantine",
+            "source_table": source_table,
+            "delta.enableChangeDataFeed": "true",
+            "delta.autoOptimize.optimizeWrite": str(self.config.optimize_write).lower(),
+            "delta.autoOptimize.autoCompact": str(self.config.auto_compact).lower(),
+            "delta.tuneFileSizesForRewrites": "true",
+            "delta.targetFileSize": str(128 * 1024 * 1024),  # 128MB target file size
+            "delta.dataSkippingNumIndexedCols": "10",  # Index more columns for better pruning
+            "delta.setTransactionRetentionDuration": "30 days"  # Optimize history retention
+        }
+
+        # Use effective partition columns
+        effective_partition_cols = partition_columns or self.config.partition_by
+
+        @dlt.table(
+            name=quarantine_table,
+            comment=f"Quarantined records from {source_table}",
+            partition_cols=effective_partition_cols,
+            table_properties=table_properties
+        )
+        def quarantine_table_func():
+            # Read from invalid records view
+            source_df = dlt.read(invalid_records_view)
+
+            # Process in batches for better memory management
+            @dlt.table(
+                name=f"{quarantine_table}_tmp",
+                temporary=True,
+                partition_cols=effective_partition_cols
+            )
+            def process_batch():
+                return source_df.repartition(
+                    200,  # Optimize parallelism
+                    *effective_partition_cols
+                )
+
+            # Apply Z-Ordering if configured
+            if self.config.z_order_by:
+                dlt.apply_changes(
+                    target=quarantine_table,
+                    source=dlt.read(f"{quarantine_table}_tmp"),
+                    keys=["source_record_id"],
+                    sequence_by="validation_meta.version_id",
+                    stored_as_scd_type=2,
+                    apply_as_deletes=None,
+                    merge_schema=True,
+                    optimization={
+                        "zorder_by": self.config.z_order_by
+                    }
+                )
+            else:
+                dlt.apply_changes(
+                    target=quarantine_table,
+                    source=dlt.read(f"{quarantine_table}_tmp"),
+                    keys=["source_record_id"],
+                    sequence_by="validation_meta.version_id",
+                    stored_as_scd_type=2,
+                    apply_as_deletes=None,
+                    merge_schema=True
+                )
+
+    def process_reference_data(self, df: DataFrame, ref_data: DataFrame) -> DataFrame:
+        """Process reference data efficiently using broadcast joins when appropriate."""
+        # Check if reference data is small enough for broadcasting
+        ref_size = ref_data.count() * len(ref_data.columns)
+        
+        if ref_size <= self.config.broadcast_threshold:
+            return df.join(F.broadcast(ref_data), ["join_key"])
+        else:
+            # For larger reference data, use regular join with optimized shuffle
+            return df.join(
+                ref_data.repartition(df.rdd.getNumPartitions(), "join_key"),
+                ["join_key"]
+            )
+
+    def optimize_quarantine_table(self, table_name: str) -> None:
+        """Optimize the quarantine table for better query performance."""
+        @dlt.table(
+            name=f"{table_name}_optimized",
+            temporary=True
+        )
+        def optimize():
+            # Optimize the table layout
+            return (
+                dlt.read(table_name)
+                .repartition(*self.config.partition_by)
+                .sortWithinPartitions(*self.config.z_order_by)
+            )
+
+        # Apply optimized layout
+        dlt.apply_changes(
+            target=table_name,
+            source=dlt.read(f"{table_name}_optimized"),
+            keys=["source_record_id"],
+            sequence_by="validation_meta.version_id",
+            stored_as_scd_type=2,
+            apply_as_deletes=None,
+            merge_schema=True,
+            optimization={
+                "zorder_by": self.config.z_order_by
+            }
+        )
+
+    def cleanup_expired_records(self, table_name: str) -> None:
+        """
+        Clean up expired records based on retention policy.
         
         Args:
-            config: Quarantine configuration
+            table_name: Name of the quarantine table
         """
-        self.config = config
-        
-        # Initialize quarantine table if enabled
-        if self.config.enabled:
-            quarantine_table_name = self.config.get_quarantine_table_name()
-            if not table_exists(quarantine_table_name):
-                create_quarantine_table(quarantine_table_name, self.config)
-    
+        if not self.config.retention_period:
+            return
+
+        @dlt.table(
+            name=f"{table_name}_cleanup",
+            temporary=True
+        )
+        def cleanup():
+            df = dlt.read(table_name)
+            cutoff_timestamp = F.current_timestamp() - F.expr(self.config.retention_period)
+            return df.filter(
+                col("validation_meta.quarantine_timestamp") > cutoff_timestamp
+            )
+
+        # The cleanup table will replace the original table
+        dlt.apply_changes(
+            target=table_name,
+            source=dlt.read(f"{table_name}_cleanup"),
+            keys=["source_record_id"],
+            sequence_by="validation_meta.version_id",
+            apply_as_deletes="true",  # Remove expired records
+            stored_as_scd_type=1
+        )
+
     def prepare_quarantine_records(
         self,
         df: DataFrame,

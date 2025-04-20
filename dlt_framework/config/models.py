@@ -152,14 +152,60 @@ class Metric(ConfigBaseModel):
 
 
 class QuarantineConfig(ConfigBaseModel):
-    """Configuration for quarantine management within DLT pipelines."""
+    """Configuration for quarantine functionality."""
     enabled: bool = Field(True, description="Whether quarantine is enabled")
-    source_table_name: Optional[str] = Field(None, description="Full Unity Catalog table name (catalog.schema.table)")
+    source_table_name: str = Field(..., description="Name of the source table")
     error_column: str = Field("error_details", description="Column name for error details")
     timestamp_column: str = Field("quarantine_timestamp", description="Column name for quarantine timestamp")
     batch_id_column: str = Field("batch_id", description="Column name for batch ID")
     source_column: str = Field("source_table", description="Column name for source table")
-    failed_expectations_column: str = Field("failed_expectations", description="Column name for failed expectations")
+    failed_expectations_column: str = Field("failed_validations", description="Column name for failed validations")
+    
+    # Performance optimization settings
+    partition_by: Optional[List[str]] = Field(
+        default=["year", "month"],
+        description="Columns to partition by (default: time-based partitioning)"
+    )
+    z_order_by: Optional[List[str]] = Field(
+        default=["source_record_id", "quarantine_timestamp"],
+        description="Columns to Z-order by for query optimization"
+    )
+    batch_size: int = Field(
+        default=100000,
+        description="Number of records to process in each batch"
+    )
+    optimize_write: bool = Field(
+        default=True,
+        description="Enable Delta write optimization"
+    )
+    auto_compact: bool = Field(
+        default=True,
+        description="Enable automatic file compaction"
+    )
+    broadcast_threshold: int = Field(
+        default=10000000,  # 10MB
+        description="Size threshold in bytes for broadcast joins"
+    )
+    target_file_size: int = Field(
+        default=134217728,  # 128MB
+        description="Target file size in bytes for optimized writes"
+    )
+    data_skipping_num_indexed_cols: int = Field(
+        default=10,
+        description="Number of columns to index for data skipping"
+    )
+    transaction_retention_duration: str = Field(
+        default="30 days",
+        description="Duration to retain transaction history"
+    )
+    watermark_delay: str = Field(
+        default="1 hour",
+        description="Delay for watermark in streaming processing"
+    )
+
+    class Config:
+        """Pydantic configuration."""
+        extra = "allow"
 
     @validator("source_table_name")
     def validate_table_name(cls, v):
