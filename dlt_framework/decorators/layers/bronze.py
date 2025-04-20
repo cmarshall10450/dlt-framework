@@ -54,9 +54,13 @@ def bronze(
     Returns:
         Decorated function that processes a DataFrame through the bronze layer
     """
-    def decorator(f: TransformFunc) -> TransformFunc:
-        # Get configuration
-        bronze_config = ConfigurationManager.get_bronze_config(config_path, config)
+    def decorator(f: T) -> T:
+        # Get configuration using resolve_config
+        bronze_config = ConfigurationManager.resolve_config(
+            layer=Layer.BRONZE,
+            config_path=config_path,
+            config_obj=config
+        )
         
         # Initialize DLT integration
         dlt_integration = DLTIntegration()
@@ -86,6 +90,7 @@ def bronze(
         # Add DLT table decorator last
         decorators.append(dlt.table(**table_props))
 
+        @wraps(f)  # Preserve function metadata
         def wrapper(*args, **kwargs) -> DataFrame:
             # Get DataFrame from original function
             df = f(*args, **kwargs)
@@ -108,6 +113,25 @@ def bronze(
         decorated = wrapper
         for decorator in decorators:
             decorated = decorator(decorated)
+
+        # Register the decorated function
+        registry.register(
+            name=f"bronze_{f.__name__}",
+            decorator=decorated,
+            metadata={
+                "layer": "bronze",
+                "layer_type": "dlt_layer",
+                "config_class": BronzeConfig.__name__,
+                "features": [
+                    "data_quality",
+                    "metrics",
+                    "pii_detection",
+                    "schema_evolution",
+                    "quarantine"
+                ]
+            },
+            decorator_type="dlt_layer"
+        )
 
         return decorated
 
