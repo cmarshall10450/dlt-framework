@@ -369,24 +369,17 @@ class ReferenceConfig(ConfigBaseModel):
 class BaseLayerConfig(ConfigBaseModel):
     """Base configuration for all layers."""
     table: UnityTableConfig = Field(..., description="Unity Catalog table configuration")
-    dependencies: List[str] = Field(default_factory=list, description="List of dependent table names")
-    version: str = Field("1.0", description="Configuration schema version")
-    monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig, description="Monitoring configuration")
-    governance: GovernanceConfig = Field(default_factory=GovernanceConfig, description="Governance configuration")
+    version: Optional[str] = Field(None, description="Configuration version")
+    monitoring: Optional[MonitoringConfig] = Field(None, description="Monitoring configuration")
+    governance: Optional[GovernanceConfig] = Field(None, description="Governance configuration")
+    validate: List[Expectation] = Field(default_factory=list, description="Data quality expectations")
+    metrics: List[Metric] = Field(default_factory=list, description="Quality metrics to compute")
 
     @validator("version")
     def validate_version(cls, v):
-        """Validate version format."""
-        if not re.match(r'^\d+\.\d+(\.\d+)?$', v):
-            raise ValueError("Version must be in format: X.Y or X.Y.Z")
-        return v
-
-    @validator("dependencies")
-    def validate_dependencies(cls, v):
-        """Validate dependency format."""
-        for dep in v:
-            if not re.match(r'^[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$', dep):
-                raise ValueError(f"Invalid dependency format: {dep}. Must be catalog.schema.table")
+        """Validate version format if provided."""
+        if v is not None and not re.match(r'^\d+\.\d+\.\d+$', v):
+            raise ValueError("version must be in format: MAJOR.MINOR.PATCH")
         return v
 
 
@@ -424,14 +417,6 @@ class SilverConfig(BaseLayerConfig):
                 ref if isinstance(ref, ReferenceConfig) else ReferenceConfig(**ref)
                 for ref in values["references"]
             ]
-        return values
-
-    @root_validator
-    def validate_dependencies(cls, values):
-        """Validate that Silver layer has at least one dependency."""
-        dependencies = values.get("dependencies", [])
-        if not dependencies:
-            raise ValueError("Silver layer must have at least one dependency")
         return values
 
 

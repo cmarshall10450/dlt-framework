@@ -75,7 +75,7 @@ bronze_config = BronzeConfig(
     table=UnityTableConfig(
         name="raw_transactions",
         catalog="demo",
-        schema="bronze",
+        schemaName="bronze",
         description="Raw transaction data with quality checks and quarantine"
     ),
     # Quarantine configuration
@@ -131,16 +131,19 @@ bronze_config = BronzeConfig(
 
 # Silver layer configuration
 silver_config = SilverConfig(
+    table=UnityTableConfig(
+        name="cleaned_transactions",
+        catalog="demo",
+        schemaName="silver",
+        description="Cleaned and standardized transaction data"
+    ),
     deduplication=True,
+    normalization=True,  # Enable normalization
     scd=SCDConfig(
         type=2,
         key_columns=["transaction_id"],
         track_columns=["amount", "status"]
     ),
-    normalization={
-        "status": "UPPER(status)",
-        "amount": "ROUND(amount, 2)"
-    },
     validate=[
         Expectation(
             name="unique_transaction",
@@ -192,7 +195,11 @@ def raw_transactions() -> DataFrame:
 # Using YAML configuration
 @silver(config_path=config_path)
 def cleaned_transactions() -> DataFrame:
-    """Clean and standardize transaction data."""
+    """Clean and standardize transaction data.
+    
+    Dependencies are managed automatically by DLT based on dlt.read() calls.
+    This ensures proper execution order without needing explicit configuration.
+    """
     return dlt.read("raw_transactions")
 
 # Using object-based configuration
