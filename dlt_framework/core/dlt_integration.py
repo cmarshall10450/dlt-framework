@@ -1,11 +1,11 @@
 """Delta Live Tables integration module for the DLT Medallion Framework."""
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Tuple
 from collections import defaultdict
 
 import dlt
 from pyspark.sql import DataFrame
-from pyspark.sql.functions import expr
+from pyspark.sql.functions import expr, col, struct, array, lit
 
 from ..config.models import (
     Expectation, 
@@ -13,7 +13,8 @@ from ..config.models import (
     ExpectationAction, 
     Layer, 
     UnityTableConfig, 
-    GovernanceConfig
+    GovernanceConfig,
+    QuarantineConfig
 )
 from .exceptions import DLTFrameworkError
 from .quarantine_manager import QuarantineManager
@@ -21,6 +22,24 @@ from .quarantine_manager import QuarantineManager
 
 class DLTIntegration:
     """Handles integration with Delta Live Tables functionality."""
+
+    def __init__(self):
+        """Initialize the DLT integration."""
+        self._quarantine_manager = None
+
+    @property
+    def quarantine_manager(self) -> Optional[QuarantineManager]:
+        """Get the quarantine manager instance."""
+        return self._quarantine_manager
+
+    def initialize_quarantine(self, config: QuarantineConfig) -> None:
+        """Initialize the quarantine manager with configuration.
+        
+        Args:
+            config: Quarantine configuration
+        """
+        if config and config.enabled:
+            self._quarantine_manager = QuarantineManager(config)
 
     @staticmethod
     def prepare_table_properties(
@@ -79,10 +98,11 @@ class DLTIntegration:
 
         return table_props
 
-    @staticmethod
     def add_expectations(
+        self,
         expectations: List[Expectation],
-        source_table: Optional[str] = None
+        source_table: Optional[str] = None,
+        quarantine_config: Optional[QuarantineConfig] = None
     ) -> Any:
         """
         Create DLT expectation decorators to be applied to a transformation function.
@@ -90,6 +110,7 @@ class DLTIntegration:
         Args:
             expectations: List of Expectation objects
             source_table: Optional source table name for quarantine
+            quarantine_config: Optional quarantine configuration
 
         Returns:
             Function decorator that applies DLT expectations
@@ -113,36 +134,48 @@ class DLTIntegration:
         if not expectations:
             return lambda f: f
 
+        # Initialize quarantine if config provided
+        if quarantine_config:
+            self.initialize_quarantine(quarantine_config)
+
         def decorator(f):
-            decorated = f
-            # Group expectations by action
-            action_groups = defaultdict(list)
-            for exp in expectations:
-                action_groups[exp.action].append(exp)
+            def wrapper(df: DataFrame) -> DataFrame:
+                # Group expectations by action
+                action_groups = defaultdict(list)
+                for exp in expectations:
+                    action_groups[exp.action].append(exp)
 
-            # Apply expectations as decorators
-            for action, exps in action_groups.items():
-                if action == ExpectationAction.QUARANTINE:
-                    continue
+                result_df = df
 
-                for exp in exps:
+                # Handle non-quarantine expectations first using DLT native decorators
+                for action, exps in action_groups.items():
+                    if action == ExpectationAction.QUARANTINE:
+                        continue
+
+                    # Create expectation dictionary for expect_all decorators
+                    exp_dict = {exp.name: exp.constraint for exp in exps}
+                    
                     if action == ExpectationAction.DROP:
-                        decorated = dlt.expect_or_drop(exp.name, exp.constraint)(decorated)
+                        result_df = dlt.expect_all_or_drop(exp_dict)(lambda df: df)(result_df)
                     elif action == ExpectationAction.FAIL:
-                        decorated = dlt.expect_or_fail(exp.name, exp.constraint)(decorated)
-                    else:
-                        raise DLTFrameworkError(
-                            f"Invalid expectation action '{action}'. Must be one of: "
-                            f"{', '.join(a.value for a in ExpectationAction)}"
-                        )
+                        result_df = dlt.expect_all_or_fail(exp_dict)(lambda df: df)(result_df)
+                    else:  # Default to warn
+                        result_df = dlt.expect_all(exp_dict)(lambda df: df)(result_df)
 
-            # Handle quarantine expectations if configured
-            quarantine_exps = action_groups.get(ExpectationAction.QUARANTINE, [])
-            if quarantine_exps and source_table:
-                # TODO: Implement quarantine logic
-                pass
+                # Handle quarantine expectations if configured
+                quarantine_exps = action_groups.get(ExpectationAction.QUARANTINE, [])
+                if quarantine_exps and self._quarantine_manager:
+                    # Use quarantine manager to handle invalid records
+                    valid_df, _ = self._quarantine_manager.quarantine_records_by_expectations(
+                        result_df,
+                        quarantine_exps,
+                        batch_id=None  # Could be added as a parameter if needed
+                    )
+                    result_df = valid_df
 
-            return decorated
+                return result_df
+
+            return wrapper
         return decorator
 
     @staticmethod
@@ -169,9 +202,13 @@ class DLTIntegration:
 
         def decorator(f):
             decorated = f
-            for metric in metrics:
-                if not metric.name or not metric.value:
-                    raise DLTFrameworkError(f"Invalid metric configuration: {metric}")
-                decorated = dlt.expect(metric.name, metric.value)(decorated)
+            # Group metrics into a single expect_all call for efficiency
+            metric_dict = {
+                metric.name: metric.value 
+                for metric in metrics 
+                if metric.name and metric.value
+            }
+            if metric_dict:
+                decorated = dlt.expect_all(metric_dict)(decorated)
             return decorated
         return decorator 
