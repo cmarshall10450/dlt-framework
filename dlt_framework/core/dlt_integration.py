@@ -175,8 +175,15 @@ class DLTIntegration:
         
         # Group non-quarantine expectations by action
         for exp in expectations:
-            if exp.action != ExpectationAction.QUARANTINE:
-                non_quarantine_exps[exp.action][exp.name] = exp.constraint
+            # Convert string action to enum if needed
+            action = (
+                ExpectationAction(exp.action) 
+                if isinstance(exp.action, str) 
+                else exp.action
+            )
+            
+            if action != ExpectationAction.QUARANTINE:
+                non_quarantine_exps[action][exp.name] = exp.constraint
 
         # Create decorators for each action type
         if ExpectationAction.DROP in non_quarantine_exps:
