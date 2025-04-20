@@ -85,7 +85,7 @@ bronze_config = BronzeConfig(
     ),
     pii_detection=True,
     schema_evolution=True,
-    validate=[
+    validations=[
         Expectation(
             name="valid_transaction_id",
             constraint="transaction_id IS NOT NULL",
@@ -144,7 +144,7 @@ silver_config = SilverConfig(
         key_columns=["transaction_id"],
         track_columns=["amount", "status"]
     ),
-    validate=[
+    validations=[
         Expectation(
             name="unique_transaction",
             constraint="COUNT(*) OVER (PARTITION BY transaction_id) = 1",
@@ -160,7 +160,7 @@ gold_config = GoldConfig(
         "product_id": "dim_products.id"
     },
     dimensions=["customer", "product", "date"],
-    validate=[
+    validations=[
         Expectation(
             name="complete_dimensions",
             constraint="customer_id IS NOT NULL AND product_id IS NOT NULL",

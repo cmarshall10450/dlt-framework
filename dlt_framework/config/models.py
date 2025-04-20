@@ -372,7 +372,7 @@ class BaseLayerConfig(ConfigBaseModel):
     version: Optional[str] = Field(None, description="Configuration version")
     monitoring: Optional[MonitoringConfig] = Field(None, description="Monitoring configuration")
     governance: Optional[GovernanceConfig] = Field(None, description="Governance configuration")
-    validate: List[Expectation] = Field(default_factory=list, description="Data quality expectations")
+    validations: List[Expectation] = Field(default_factory=list, description="Data quality expectations")
     metrics: List[Metric] = Field(default_factory=list, description="Quality metrics to compute")
 
     @validator("version")
