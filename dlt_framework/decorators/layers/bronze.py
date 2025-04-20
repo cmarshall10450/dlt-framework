@@ -12,7 +12,7 @@ from typing import Any, Callable, Optional, Protocol, TypeVar
 from pyspark.sql import DataFrame
 
 from dlt_framework.core import DLTIntegration, DecoratorRegistry
-from dlt_framework.config import BronzeConfig, ConfigurationManager
+from dlt_framework.config import BronzeConfig, ConfigurationManager, Layer
 import dlt
 
 
@@ -71,13 +71,9 @@ def bronze(
         # Get table properties from DLTIntegration
         dlt_integration = DLTIntegration()
         table_props = dlt_integration.prepare_table_properties(
-            catalog=resolved_config.table.catalog,
-            schema=resolved_config.table.schema_name,
-            table_name=resolved_config.table.name,
-            comment=resolved_config.table.description,
-            properties=resolved_config.table.properties,
-            tags=resolved_config.table.tags,
-            column_comments=resolved_config.table.column_comments
+            table_config=resolved_config.table,
+            layer=Layer.BRONZE,
+            governance=resolved_config.governance
         )
 
         @wraps(func)
@@ -87,15 +83,15 @@ def bronze(
             df = func(*args, **inner_kwargs)
 
             # Apply expectations if configured
-            if resolved_config.validate:
-                df = dlt_integration.add_expectations(df, resolved_config.validate)
+            if resolved_config.validations:
+                df = dlt_integration.add_expectations(df, resolved_config.validations)
 
             # Apply metrics if configured
             if resolved_config.metrics:
                 df = dlt_integration.add_quality_metrics(df, resolved_config.metrics)
 
             # Detect PII if enabled
-            if resolved_config.pii_detection and pii_detector:
+            if resolved_config.governance and resolved_config.governance.pii_detection and pii_detector:
                 pii_detector.detect_pii(df)
 
             # Handle quarantine if enabled
@@ -104,7 +100,7 @@ def bronze(
                 pass
 
             # Handle schema evolution if enabled
-            if resolved_config.schema_evolution:
+            if resolved_config.governance and resolved_config.governance.schema_evolution:
                 # TODO: Implement schema evolution logic
                 pass
 
