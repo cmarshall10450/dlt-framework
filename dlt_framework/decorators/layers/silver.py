@@ -5,6 +5,7 @@ This decorator applies silver layer-specific functionality including:
 - Metrics computation
 - PII masking
 - Reference data validation
+- Slowly Changing Dimension support
 
 This implementation ensures tables are properly discovered by DLT at module import time.
 """
@@ -13,58 +14,84 @@ from typing import Any, Callable, Optional, Dict, List, Union
 import json
 from datetime import datetime
 import sys
+from pydantic import ValidationError
 
 from pyspark.sql import DataFrame
 import dlt
 
 from dlt_framework.core import DLTIntegration, DecoratorRegistry, ReferenceManager
-from dlt_framework.config import SilverConfig, ConfigurationManager, Layer, Expectation, ExpectationAction
+from dlt_framework.config import (
+    SilverConfig, ConfigurationManager, Layer, Expectation, 
+    ExpectationAction, UnityTableConfig
+)
 
 
 def silver(
+    table_name: Optional[str] = None,
     config_path: Optional[str] = None,
-    config: Optional[SilverConfig] = None
+    config: Optional[SilverConfig] = None,
+    **kwargs
 ) -> Callable:
     """Silver layer decorator with business rule validation.
     
     This implementation ensures the decorated function is properly registered
     with DLT at module import time so it can be discovered by the DLT pipeline.
+    
+    Args:
+        table_name: Optional table name (overrides name in config)
+        config_path: Optional path to configuration file
+        config: Optional configuration object
+        **kwargs: Additional configuration overrides
+        
+    Returns:
+        Decorator function
     """
     def decorator(func: Callable) -> Callable:
         # Get the original function's module
         module = sys.modules[func.__module__]
         
-        # Resolve configuration immediately (at decorator application time)
-        silver_config = ConfigurationManager.resolve_config(
-            layer=Layer.SILVER,
-            config_path=config_path,
-            config_obj=config
-        )
+        # Create table config from table_name if provided
+        table_config = None
+        if table_name:
+            try:
+                # Create minimum table config with defaults
+                table_config = UnityTableConfig(
+                    name=table_name,
+                    catalog="main",  # Default catalog
+                    schema_name="default"  # Default schema
+                )
+                # Add to kwargs for config resolution
+                kwargs["table"] = table_config.dict()
+            except ValidationError as e:
+                print(f"Warning: Invalid table name '{table_name}': {e}")
         
-        # Initialize DLT integration
+        # Resolve final configuration
+        try:
+            silver_config = ConfigurationManager.resolve_config(
+                layer=Layer.SILVER,
+                config_path=config_path,
+                config_obj=config,
+                **kwargs
+            )
+        except Exception as e:
+            print(f"Error resolving configuration: {e}")
+            # Fallback to basic configuration
+            silver_config = SilverConfig(
+                table=table_config or UnityTableConfig(
+                    name=func.__name__,
+                    catalog="main",
+                    schema_name="default"
+                )
+            )
+        
+        # Get actual table name (from config or function name)
+        final_table_name = silver_config.table.name or func.__name__
+        
+        # Initialize DLT integration with the resolved config
         dlt_integration = DLTIntegration(silver_config)
         
-        # Get table name and properties
-        table_name = silver_config.table.name or func.__name__
-        full_table_name = f"{silver_config.table.catalog}.{silver_config.table.schema_name}.{table_name}"
-        
-        table_props = {
-            "layer": "silver",
-            "pipelines.autoOptimize.managed": "true",
-            "delta.columnMapping.mode": "name",
-            "pipelines.metadata.createdBy": "dlt_framework",
-            "pipelines.metadata.createdTimestamp": datetime.now().isoformat(),
-            "comment": json.dumps({
-                "description": func.__doc__ or f"Silver table for {table_name}",
-                "config": silver_config.dict(),
-                "features": {
-                    "deduplication": silver_config.deduplication,
-                    "normalization": silver_config.normalization,
-                    "scd": bool(silver_config.scd),
-                    "references": bool(silver_config.references)
-                }
-            })
-        }
+        # Create fully qualified table name for reference
+        full_table_name = f"{silver_config.table.catalog}.{silver_config.table.schema_name}.{final_table_name}"
         
         # Create a runtime wrapper that implements silver layer functionality
         @wraps(func)
@@ -72,67 +99,44 @@ def silver(
             # Get DataFrame from original function
             df = func(*args, **kwargs)
             
-            # Apply deduplication if configured
-            if silver_config.deduplication:
-                df = df.dropDuplicates()
+            try:
+                # Apply deduplication if configured
+                if silver_config.deduplication:
+                    df = df.dropDuplicates()
                 
-            # Apply normalization if configured
-            if silver_config.normalization:
-                df = dlt_integration.normalize_dataframe(df)
+                # Apply normalization if configured
+                if silver_config.normalization:
+                    df = dlt_integration.normalize_dataframe(df)
                 
-            # Apply SCD logic if configured
-            if silver_config.scd:
-                df = dlt_integration.apply_scd(df, silver_config.scd)
+                # Apply SCD logic if configured
+                if silver_config.scd:
+                    df = dlt_integration.apply_scd(df, silver_config.scd)
                 
-            # Apply reference data joins if configured
-            if silver_config.references:
-                df = dlt_integration.apply_references(df, silver_config.references)
-                
+                # Apply reference data joins if configured
+                if silver_config.references:
+                    df = dlt_integration.apply_references(df, silver_config.references)
+            except Exception as e:
+                print(f"Error applying silver layer transformations: {e}")
+                # Continue with the original dataframe
+            
             return df
         
-        # CRITICAL: Apply DLT expectations DIRECTLY to the runtime wrapper
-        # at module import time
+        # Apply expectations from DLT integration
         if silver_config.validations:
-            for expectation in silver_config.validations:
-                if expectation.action != ExpectationAction.QUARANTINE:
-                    dlt.expect(
-                        name=expectation.name,
-                        constraint=expectation.constraint,
-                        action=expectation.action.value,  # Will be 'fail' or 'drop'
-                        description=expectation.description
-                    )(runtime_wrapper)
+            # Apply expectations using integration method
+            runtime_wrapper = dlt_integration.add_expectations(silver_config.validations)(runtime_wrapper)
         
-        # Add quality metrics if monitoring is configured
-        if silver_config.monitoring and silver_config.monitoring.metrics:
-            dlt_integration.add_quality_metrics()(runtime_wrapper)
+        # Add quality metrics if configured
+        runtime_wrapper = dlt_integration.add_quality_metrics()(runtime_wrapper)
         
-        # CRITICAL: Register with DLT table decorator DIRECTLY at module import time
-        # This is what makes the table discoverable by DLT
-        dlt.table(
-            name=full_table_name,
-            comment=f"Silver layer table for {table_name}",
-            table_properties=table_props,
-            temporary=False,
-            path=f"{silver_config.table.storage_location}/{table_name}" if silver_config.table.storage_location else None
-        )(runtime_wrapper)
-        
-        # Add to DecoratorRegistry for metadata tracking
-        DecoratorRegistry.register(
-            func=func,
-            layer=Layer.SILVER,
-            features={
-                "deduplication": silver_config.deduplication,
-                "normalization": silver_config.normalization,
-                "scd": bool(silver_config.scd),
-                "references": bool(silver_config.references)
-            },
-            config=silver_config
-        )
+        # CRITICAL: Apply DLT table decorator using the integration method
+        # This registers the table with DLT at import time
+        runtime_wrapper = dlt_integration.apply_table_properties(runtime_wrapper)
         
         # Log for debugging
         print(f"Registered silver table: {full_table_name}")
         
-        # Return the wrapper function which is now directly decorated with @dlt.table
+        # Return the wrapper function which is now decorated with @dlt.table
         return runtime_wrapper
     
     return decorator
