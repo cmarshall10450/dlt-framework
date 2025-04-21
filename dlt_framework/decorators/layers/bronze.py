@@ -50,7 +50,7 @@ def bronze(
         )
         
         # Initialize DLT integration
-        dlt_integration = DLTIntegration()
+        dlt_integration = DLTIntegration(bronze_config)
         
         # Get table name and properties
         table_name = bronze_config.table.name or func.__name__
@@ -172,7 +172,7 @@ def bronze(
             features={
                 "quarantine": bool(bronze_config.quarantine),
                 "pii_detection": bool(pii_detector),
-                "schema_evolution": bronze_config.schema_evolution,
+                "schema_evolution": bronze_config.governance.schema_evolution,
                 "incremental": bool(watermark_column)
             },
             config=bronze_config

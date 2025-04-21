@@ -42,7 +42,7 @@ def silver(
         )
         
         # Initialize DLT integration
-        dlt_integration = DLTIntegration()
+        dlt_integration = DLTIntegration(silver_config)
         
         # Get table name and properties
         table_name = silver_config.table.name or func.__name__

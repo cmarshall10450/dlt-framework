@@ -46,7 +46,7 @@ def gold(
         )
         
         # Initialize DLT integration
-        dlt_integration = DLTIntegration()
+        dlt_integration = DLTIntegration(gold_config)
         
         # Get table name and properties
         table_name = gold_config.table.name or func.__name__

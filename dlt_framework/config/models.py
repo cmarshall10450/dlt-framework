@@ -489,6 +489,7 @@ class BaseLayerConfig(ConfigBaseModel):
 class BronzeConfig(BaseLayerConfig):
     """Bronze layer specific configuration."""
     quarantine: Optional[QuarantineConfig] = Field(None, description="Quarantine configuration")
+    schema_evolution: bool = Field(True, description="Whether schema evolution is allowed")
     
     @root_validator(pre=True)
     def process_quarantine(cls, values):

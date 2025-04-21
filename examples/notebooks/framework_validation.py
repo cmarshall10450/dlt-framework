@@ -225,13 +225,13 @@ def cleaned_transactions() -> DataFrame:
     Dependencies are managed automatically by DLT based on dlt.read() calls.
     This ensures proper execution order without needing explicit configuration.
     """
-    return dlt.read("raw_transactions")
+    return dlt.read("demo.bronze.raw_transactions")
 
 # Using object-based configuration
 @gold(config=gold_config)
 def transaction_metrics() -> DataFrame:
     """Calculate transaction metrics."""
-    df = dlt.read("cleaned_transactions")
+    df = dlt.read("demo.silver.cleaned_transactions")
     return df.groupBy("date").agg(
         F.sum("amount").alias("daily_revenue"),
         F.countDistinct("transaction_id").alias("transaction_count")
