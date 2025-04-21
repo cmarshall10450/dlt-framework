@@ -35,18 +35,18 @@ def silver(
         module = sys.modules[func.__module__]
         
         # Resolve configuration immediately (at decorator application time)
-        config_obj = ConfigurationManager.resolve_config(
+        silver_config = ConfigurationManager.resolve_config(
             layer=Layer.SILVER,
             config_path=config_path,
             config_obj=config
         )
         
         # Initialize DLT integration
-        dlt_integration = DLTIntegration(config_obj)
+        dlt_integration = DLTIntegration()
         
         # Get table name and properties
-        table_name = config_obj.table.name or func.__name__
-        full_table_name = f"{config_obj.table.catalog}.{config_obj.table.schema_name}.{table_name}"
+        table_name = silver_config.table.name or func.__name__
+        full_table_name = f"{silver_config.table.catalog}.{silver_config.table.schema_name}.{table_name}"
         
         table_props = {
             "layer": "silver",
@@ -56,12 +56,12 @@ def silver(
             "pipelines.metadata.createdTimestamp": datetime.now().isoformat(),
             "comment": json.dumps({
                 "description": func.__doc__ or f"Silver table for {table_name}",
-                "config": config_obj.dict(),
+                "config": silver_config.dict(),
                 "features": {
-                    "deduplication": config_obj.deduplication,
-                    "normalization": config_obj.normalization,
-                    "scd": bool(config_obj.scd),
-                    "references": bool(config_obj.references)
+                    "deduplication": silver_config.deduplication,
+                    "normalization": silver_config.normalization,
+                    "scd": bool(silver_config.scd),
+                    "references": bool(silver_config.references)
                 }
             })
         }
@@ -73,27 +73,27 @@ def silver(
             df = func(*args, **kwargs)
             
             # Apply deduplication if configured
-            if config_obj.deduplication:
+            if silver_config.deduplication:
                 df = df.dropDuplicates()
                 
             # Apply normalization if configured
-            if config_obj.normalization:
+            if silver_config.normalization:
                 df = dlt_integration.normalize_dataframe(df)
                 
             # Apply SCD logic if configured
-            if config_obj.scd:
-                df = dlt_integration.apply_scd(df, config_obj.scd)
+            if silver_config.scd:
+                df = dlt_integration.apply_scd(df, silver_config.scd)
                 
             # Apply reference data joins if configured
-            if config_obj.references:
-                df = dlt_integration.apply_references(df, config_obj.references)
+            if silver_config.references:
+                df = dlt_integration.apply_references(df, silver_config.references)
                 
             return df
         
         # CRITICAL: Apply DLT expectations DIRECTLY to the runtime wrapper
         # at module import time
-        if config_obj.validations:
-            for expectation in config_obj.validations:
+        if silver_config.validations:
+            for expectation in silver_config.validations:
                 if expectation.action != ExpectationAction.QUARANTINE:
                     dlt.expect(
                         name=expectation.name,
@@ -103,7 +103,7 @@ def silver(
                     )(runtime_wrapper)
         
         # Add quality metrics if monitoring is configured
-        if config_obj.monitoring_config and config_obj.monitoring_config.metrics:
+        if silver_config.monitoring_config and silver_config.monitoring_config.metrics:
             dlt_integration.add_quality_metrics()(runtime_wrapper)
         
         # CRITICAL: Register with DLT table decorator DIRECTLY at module import time
@@ -113,7 +113,7 @@ def silver(
             comment=f"Silver layer table for {table_name}",
             table_properties=table_props,
             temporary=False,
-            path=f"{config_obj.table.storage_location}/{table_name}" if config_obj.table.storage_location else None
+            path=f"{silver_config.table.storage_location}/{table_name}" if silver_config.table.storage_location else None
         )(runtime_wrapper)
         
         # Add to DecoratorRegistry for metadata tracking
@@ -121,12 +121,12 @@ def silver(
             func=func,
             layer=Layer.SILVER,
             features={
-                "deduplication": config_obj.deduplication,
-                "normalization": config_obj.normalization,
-                "scd": bool(config_obj.scd),
-                "references": bool(config_obj.references)
+                "deduplication": silver_config.deduplication,
+                "normalization": silver_config.normalization,
+                "scd": bool(silver_config.scd),
+                "references": bool(silver_config.references)
             },
-            config=config_obj
+            config=silver_config
         )
         
         # Log for debugging

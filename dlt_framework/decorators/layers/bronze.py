@@ -50,7 +50,7 @@ def bronze(
         )
         
         # Initialize DLT integration
-        dlt_integration = DLTIntegration(bronze_config)
+        dlt_integration = DLTIntegration()
         
         # Get table name and properties
         table_name = bronze_config.table.name or func.__name__
