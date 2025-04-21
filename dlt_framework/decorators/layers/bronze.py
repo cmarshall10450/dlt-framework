@@ -153,7 +153,7 @@ def bronze(
                 )(runtime_wrapper)
         
         # Add quality metrics if monitoring is configured
-        if bronze_config.monitoring_config and bronze_config.monitoring_config.metrics:
+        if bronze_config.monitoring and bronze_config.monitoring.metrics:
             dlt_integration.add_quality_metrics()(runtime_wrapper)
         
         # CRITICAL: Register with DLT table decorator DIRECTLY at module import time

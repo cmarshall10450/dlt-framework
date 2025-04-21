@@ -103,7 +103,7 @@ def silver(
                     )(runtime_wrapper)
         
         # Add quality metrics if monitoring is configured
-        if silver_config.monitoring_config and silver_config.monitoring_config.metrics:
+        if silver_config.monitoring and silver_config.monitoring.metrics:
             dlt_integration.add_quality_metrics()(runtime_wrapper)
         
         # CRITICAL: Register with DLT table decorator DIRECTLY at module import time
