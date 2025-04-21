@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import json
 from datetime import datetime
 from functools import reduce
+import sys
 
 import dlt
 from pyspark.sql import DataFrame
@@ -16,6 +17,7 @@ from dlt_framework.config import (
 from dlt_framework.core import (
     DLTIntegration, QuarantineManager, DecoratorRegistry, PIIDetector
 )
+from dlt_framework.utils.table_utils import table_exists
 
 
 def bronze(
@@ -43,7 +45,7 @@ def bronze(
             table_properties = {
                 "layer": "bronze",
                 "pipelines.autoOptimize.managed": "true",
-                "delta.enableChangeDataFeed": "true" if bronze_config.quarantine_config else "false",
+                "delta.enableChangeDataFeed": "true" if bronze_config.quarantine else "false",
                 "delta.columnMapping.mode": "name",
                 "pipelines.metadata.createdBy": "dlt_framework",
                 "pipelines.metadata.createdTimestamp": datetime.now().isoformat(),
@@ -51,7 +53,7 @@ def bronze(
                     "description": f.__doc__ or f"Bronze table for {table_name}",
                     "config": bronze_config.dict(),
                     "features": {
-                        "quarantine": bool(bronze_config.quarantine_config),
+                        "quarantine": bool(bronze_config.quarantine),
                         "pii_detection": bool(pii_detector),
                         "schema_evolution": bronze_config.schema_evolution,
                         "incremental": bool(watermark_column)
@@ -59,8 +61,16 @@ def bronze(
                 })
             }
 
-            # Get DLT expectation decorators
-            expectation_decorators = dlt_integration.get_expectation_decorators()
+            # Get DLT expectation decorators for non-quarantine expectations
+            expectation_decorators = []
+            if bronze_config.validations:
+                non_quarantine_validations = [
+                    exp for exp in bronze_config.validations 
+                    if exp.action != "quarantine"
+                ]
+                expectation_decorators.extend(
+                    dlt_integration.get_expectation_decorators(non_quarantine_validations)
+                )
 
             # Add quality metrics if monitoring is configured
             if bronze_config.monitoring_config:
@@ -74,9 +84,20 @@ def bronze(
                 comment=f"Bronze layer table for {table_name}",
                 table_properties=table_properties,
                 temporary=False,
-                path=f"{bronze_config.storage_location}/{table_name}" if bronze_config.storage_location else None
+                path=f"{bronze_config.table.storage_location}/{table_name}" if bronze_config.table.storage_location else None
             )
             expectation_decorators.append(table_decorator)
+
+            # Create quarantine table function if configured
+            if bronze_config.quarantine:
+                # Add to the module's global namespace for import-time discovery
+                module_globals = sys.modules[f.__module__].__dict__
+                quarantine_table_func_name = f"{table_name}_quarantine"
+                quarantine_manager = QuarantineManager(bronze_config.quarantine)
+                module_globals[quarantine_table_func_name] = quarantine_manager.create_quarantine_table_function(
+                    source_table=full_table_name,
+                    partition_columns=[watermark_column] if watermark_column else None
+                )
 
             # Apply all decorators to the function
             decorated_func = reduce(lambda x, y: y(x), expectation_decorators, f)
@@ -89,35 +110,32 @@ def bronze(
                 df = df.withColumn("source_record_id", monotonically_increasing_id())
 
             # Handle quarantine if configured
-            if bronze_config.quarantine_config:
-                quarantine_manager = QuarantineManager(bronze_config.quarantine_config)
+            if bronze_config.quarantine:
+                quarantine_manager = QuarantineManager(bronze_config.quarantine)
+                
+                # Get quarantine validations
+                quarantine_validations = [
+                    exp for exp in bronze_config.validations 
+                    if exp.action == "quarantine"
+                ]
                 
                 # Create invalid records view and get valid records
                 df, invalid_records_view = quarantine_manager.create_invalid_records_view(
                     df=df,
-                    expectations=bronze_config.validations,
-                    source_table=table_name,
+                    expectations=quarantine_validations,
+                    source_table=full_table_name,
                     watermark_column=watermark_column
-                )
-
-                # Create quarantine table with relationship to source
-                quarantine_table = f"{table_name}_quarantine"
-                quarantine_manager.create_quarantine_table(
-                    table_name=quarantine_table,
-                    config=bronze_config.quarantine_config,
-                    source_table=table_name,
-                    partition_columns=[watermark_column] if watermark_column else None
                 )
 
                 # Register relationship in DecoratorRegistry
                 DecoratorRegistry.register_relationship(
-                    source=table_name,
-                    target=quarantine_table,
+                    source=full_table_name,
+                    target=f"{full_table_name}_quarantine",
                     relationship_type="quarantine",
                     metadata={
                         "invalid_records_view": invalid_records_view,
                         "watermark_column": watermark_column,
-                        "quarantine_config": bronze_config.quarantine_config.dict()
+                        "quarantine_config": bronze_config.quarantine.dict()
                     }
                 )
 
@@ -130,7 +148,7 @@ def bronze(
                 func=f,
                 layer=Layer.BRONZE,
                 features={
-                    "quarantine": bool(bronze_config.quarantine_config),
+                    "quarantine": bool(bronze_config.quarantine),
                     "pii_detection": bool(pii_detector),
                     "schema_evolution": bronze_config.schema_evolution,
                     "incremental": bool(watermark_column)

@@ -17,29 +17,8 @@ from pyspark.sql.functions import (
     to_json, col, expr, window, date_trunc
 )
 
-from .table_operations import create_quarantine_table, write_to_quarantine_table, table_exists
+from .table_operations import get_empty_quarantine_dataframe, write_to_quarantine_table, table_exists
 from dlt_framework.config import QuarantineConfig, Expectation
-
-
-class QuarantineConfig:
-    """Enhanced quarantine configuration with performance settings."""
-    def __init__(
-        self,
-        enabled: bool = True,
-        partition_by: Optional[List[str]] = None,
-        z_order_by: Optional[List[str]] = None,
-        batch_size: int = 100000,
-        optimize_write: bool = True,
-        auto_compact: bool = True,
-        broadcast_threshold: int = 10000000  # 10MB threshold for broadcast joins
-    ):
-        self.enabled = enabled
-        self.partition_by = partition_by or ["year", "month"]  # Default time-based partitioning
-        self.z_order_by = z_order_by or ["source_record_id", "quarantine_timestamp"]
-        self.batch_size = batch_size
-        self.optimize_write = optimize_write
-        self.auto_compact = auto_compact
-        self.broadcast_threshold = broadcast_threshold
 
 
 class QuarantineManager:
@@ -57,7 +36,17 @@ class QuarantineManager:
         source_table: str,
         watermark_column: Optional[str] = None
     ) -> Tuple[DataFrame, str]:
-        """Create an optimized streaming view of invalid records."""
+        """Create an optimized streaming view of invalid records.
+        
+        Args:
+            df: Input DataFrame
+            expectations: List of expectations to validate
+            source_table: Source table name
+            watermark_column: Optional watermark column
+            
+        Returns:
+            Tuple of (valid_records, invalid_records_view_name)
+        """
         if not expectations:
             return df, ""
 
@@ -109,12 +98,9 @@ class QuarantineManager:
             name=view_name,
             comment=f"Invalid records from {source_table}",
             temporary=False,
-            partition_cols=self.config.partition_by,
             table_properties={
                 "delta.autoOptimize.optimizeWrite": str(self.config.optimize_write).lower(),
                 "delta.autoOptimize.autoCompact": str(self.config.auto_compact).lower(),
-                "delta.tuneFileSizesForRewrites": "true",
-                "delta.targetFileSize": str(128 * 1024 * 1024)  # 128MB target file size
             }
         )(lambda: invalid_records)
 
@@ -125,8 +111,17 @@ class QuarantineManager:
         source_table: str,
         table_name: Optional[str] = None,
         partition_columns: Optional[List[str]] = None
-    ) -> None:
-        """Create an optimized DLT table for quarantined records."""
+    ) -> Callable[[], DataFrame]:
+        """Create an optimized DLT table function for quarantined records and return it.
+        
+        Args:
+            source_table: Source table name
+            table_name: Optional custom table name
+            partition_columns: Optional partition columns
+            
+        Returns:
+            A function decorated with @dlt.table that can be registered
+        """
         invalid_records_view = f"{source_table}_invalid_records"
         quarantine_table = table_name or f"{source_table}_quarantine"
 
@@ -140,12 +135,17 @@ class QuarantineManager:
             "delta.tuneFileSizesForRewrites": "true",
             "delta.targetFileSize": str(128 * 1024 * 1024),  # 128MB target file size
             "delta.dataSkippingNumIndexedCols": "10",  # Index more columns for better pruning
-            "delta.setTransactionRetentionDuration": "30 days"  # Optimize history retention
         }
 
         # Use effective partition columns
         effective_partition_cols = partition_columns or self.config.partition_by
-
+        
+        # Create a clean config copy to avoid closure issues
+        config_dict = {
+            k: v for k, v in self.config.__dict__.items()
+            if not k.startswith('_')
+        }
+        
         @dlt.table(
             name=quarantine_table,
             comment=f"Quarantined records from {source_table}",
@@ -153,45 +153,20 @@ class QuarantineManager:
             table_properties=table_properties
         )
         def quarantine_table_func():
-            # Read from invalid records view
-            source_df = dlt.read(invalid_records_view)
-
-            # Process in batches for better memory management
-            @dlt.table(
-                name=f"{quarantine_table}_tmp",
-                temporary=True,
-                partition_cols=effective_partition_cols
-            )
-            def process_batch():
-                return source_df.repartition(
-                    200,  # Optimize parallelism
-                    *effective_partition_cols
-                )
-
-            # Apply Z-Ordering if configured
-            if self.config.z_order_by:
-                dlt.apply_changes(
-                    target=quarantine_table,
-                    source=dlt.read(f"{quarantine_table}_tmp"),
-                    keys=["source_record_id"],
-                    sequence_by="validation_meta.version_id",
-                    stored_as_scd_type=2,
-                    apply_as_deletes=None,
-                    merge_schema=True,
-                    optimization={
-                        "zorder_by": self.config.z_order_by
-                    }
-                )
+            """Read quarantined records from the invalid records view."""
+            # First check if invalid records view exists
+            if table_exists(invalid_records_view):
+                return dlt.read(invalid_records_view)
             else:
-                dlt.apply_changes(
-                    target=quarantine_table,
-                    source=dlt.read(f"{quarantine_table}_tmp"),
-                    keys=["source_record_id"],
-                    sequence_by="validation_meta.version_id",
-                    stored_as_scd_type=2,
-                    apply_as_deletes=None,
-                    merge_schema=True
+                # Return empty DataFrame with correct schema
+                spark = SparkSession.getActiveSession()
+                return get_empty_quarantine_dataframe(
+                    spark, 
+                    source_table, 
+                    effective_partition_cols
                 )
+        
+        return quarantine_table_func  # Actually return the function
 
     def process_reference_data(self, df: DataFrame, ref_data: DataFrame) -> DataFrame:
         """Process reference data efficiently using broadcast joins when appropriate."""
