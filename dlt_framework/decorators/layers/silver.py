@@ -6,7 +6,7 @@ This decorator applies silver layer-specific functionality including:
 - PII masking
 - Reference data validation
 """
-from functools import wraps
+from functools import wraps, reduce
 from typing import Any, Callable, Optional, TypeVar, Dict, List, Union
 from collections import defaultdict
 import json
@@ -14,6 +14,7 @@ from datetime import datetime
 
 from pyspark.sql import DataFrame
 import dlt
+from pyspark.sql.functions import col, current_timestamp
 
 from dlt_framework.core import DLTIntegration, DecoratorRegistry, ReferenceManager
 from dlt_framework.config import SilverConfig, ConfigurationManager, Layer, Expectation, ExpectationAction
@@ -29,93 +30,108 @@ T = TypeVar("T", bound=Callable[..., DataFrame])
 
 def silver(
     config_path: Optional[str] = None,
-    config: Optional[SilverConfig] = None
+    config: Optional[SilverConfig] = None,
+    reference_manager: Optional[ReferenceManager] = None
 ) -> Callable:
-    """Silver layer decorator with business rule validation."""
+    """Silver layer decorator with enhanced data quality and lineage."""
     def decorator(f: Callable) -> Callable:
         @wraps(f)
         def wrapper(*args: Any, **kwargs: Any) -> DataFrame:
             # Resolve configuration
-            config_obj = ConfigurationManager.resolve_config(
+            silver_config = ConfigurationManager.resolve_config(
                 layer=Layer.SILVER,
                 config_path=config_path,
                 config_obj=config
             )
 
             # Initialize DLT integration
-            dlt_integration = DLTIntegration(config_obj)
+            dlt_integration = DLTIntegration(silver_config)
+
+            # Initialize reference manager if needed
+            ref_manager = reference_manager or ReferenceManager()
 
             # Prepare table properties with enhanced lineage
-            table_name = config_obj.table.name or f.__name__
-            table_props = {
+            table_name = silver_config.table.name or f.__name__
+            full_table_name = f"{silver_config.table.catalog}.{silver_config.table.schema_name}.{table_name}"
+            
+            # Log table registration for debugging
+            print(f"Registering silver table with name: {full_table_name}")
+            
+            table_properties = {
                 "layer": "silver",
                 "pipelines.autoOptimize.managed": "true",
+                "delta.enableChangeDataFeed": "true" if silver_config.scd else "false",
                 "delta.columnMapping.mode": "name",
                 "pipelines.metadata.createdBy": "dlt_framework",
                 "pipelines.metadata.createdTimestamp": datetime.now().isoformat(),
                 "comment": json.dumps({
                     "description": f.__doc__ or f"Silver table for {table_name}",
-                    "config": config_obj.dict(),
+                    "config": silver_config.dict(),
                     "features": {
-                        "deduplication": config_obj.deduplication,
-                        "normalization": config_obj.normalization,
-                        "scd": bool(config_obj.scd),
-                        "references": bool(config_obj.references)
+                        "deduplication": silver_config.deduplication,
+                        "normalization": silver_config.normalization,
+                        "scd": bool(silver_config.scd),
+                        "references": bool(silver_config.references)
                     }
                 })
             }
 
-            # Get DLT expectation decorators for business rules
+            # Get DLT expectation decorators
             expectation_decorators = []
-            if config_obj.validations:
-                for expectation in config_obj.validations:
-                    decorator = dlt.expect(
-                        name=expectation.name,
-                        constraint=expectation.constraint,
-                        action=expectation.action.value,  # Will be 'fail' or 'drop'
-                        description=expectation.description
-                    )
-                    expectation_decorators.append(decorator)
+            if silver_config.validations:
+                expectation_decorators.extend(
+                    dlt_integration.get_expectation_decorators(silver_config.validations)
+                )
 
             # Add quality metrics if monitoring is configured
-            if config_obj.monitoring_config:
+            if silver_config.monitoring_config:
                 metrics_decorator = dlt_integration.add_quality_metrics()
                 expectation_decorators.append(metrics_decorator)
 
-            # Add DLT table decorator with full table path
-            full_table_name = f"{config_obj.table.catalog}.{config_obj.table.schema_name}.{table_name}"
+            # Add DLT table decorator
             table_decorator = dlt.table(
                 name=full_table_name,
                 comment=f"Silver layer table for {table_name}",
-                table_properties=table_props,
+                table_properties=table_properties,
                 temporary=False,
-                path=f"{config_obj.table.storage_location}/{table_name}" if config_obj.table.storage_location else None
+                path=f"{silver_config.table.storage_location}/{table_name}" if silver_config.table.storage_location else None
             )
             expectation_decorators.append(table_decorator)
 
             # Apply all decorators to the function
-            decorated_func = f
-            for decorator in reversed(expectation_decorators):
-                decorated_func = decorator(decorated_func)
+            decorated_func = reduce(lambda x, y: y(x), expectation_decorators, f)
 
             # Get DataFrame from decorated function
             df = decorated_func(*args, **kwargs)
 
-            # Apply deduplication if configured
-            if config_obj.deduplication:
-                df = df.dropDuplicates()
-
             # Apply normalization if configured
-            if config_obj.normalization:
-                df = dlt_integration.normalize_dataframe(df)
+            if silver_config.normalization:
+                df = dlt_integration.apply_normalization(df)
 
-            # Apply SCD logic if configured
-            if config_obj.scd:
-                df = dlt_integration.apply_scd(df, config_obj.scd)
+            # Apply deduplication if configured
+            if silver_config.deduplication:
+                df = dlt_integration.apply_deduplication(df)
 
-            # Apply reference data joins if configured
-            if config_obj.references:
-                df = dlt_integration.apply_references(df, config_obj.references)
+            # Apply SCD if configured
+            if silver_config.scd:
+                df = dlt_integration.apply_scd(df)
+
+            # Apply reference data if configured
+            if silver_config.references:
+                df = ref_manager.apply_references(df)
+
+            # Register decorated function in DecoratorRegistry
+            DecoratorRegistry.register(
+                func=f,
+                layer=Layer.SILVER,
+                features={
+                    "deduplication": silver_config.deduplication,
+                    "normalization": silver_config.normalization,
+                    "scd": bool(silver_config.scd),
+                    "references": bool(silver_config.references)
+                },
+                config=silver_config
+            )
 
             return df
 

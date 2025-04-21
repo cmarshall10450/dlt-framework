@@ -17,7 +17,6 @@ from dlt_framework.config import (
 from dlt_framework.core import (
     DLTIntegration, QuarantineManager, DecoratorRegistry, PIIDetector
 )
-from dlt_framework.utils.table_utils import table_exists
 
 
 def bronze(
