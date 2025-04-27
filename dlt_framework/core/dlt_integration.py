@@ -18,7 +18,7 @@ from ..config.models import (
     Metric, 
     ExpectationAction, 
     Layer, 
-    UnityTableConfig, 
+    DLTTableConfig, 
     GovernanceConfig,
     QuarantineConfig,
     ReferenceConfig,
@@ -65,7 +65,7 @@ class DLTIntegration:
     
     def prepare_table_properties(
         self,
-        table_config: UnityTableConfig,
+        table_config: DLTTableConfig,
         layer: Layer,
         governance: Optional[GovernanceConfig] = None,
         partition_cols: Optional[List[str]] = None,
@@ -75,7 +75,7 @@ class DLTIntegration:
         Prepare properties for @dlt.table decorator.
 
         Args:
-            table_config: Unity Catalog table configuration
+            table_config: DLT Catalog table configuration
             layer: The layer this table belongs to
             governance: Optional governance configuration
             partition_cols: Optional list of partition columns

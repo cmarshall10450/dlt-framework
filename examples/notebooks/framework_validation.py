@@ -1,11 +1,12 @@
 # Databricks notebook source
-# MAGIC %md
-# MAGIC # DLT Medallion Framework Validation
-# MAGIC 
-# MAGIC This notebook demonstrates the usage of the DLT Medallion Framework with both YAML and object-based configuration.
+# MAGIC %pip install pyyaml
 
 # COMMAND ----------
-# MAGIC %pip install pyspark pyyaml
+
+# MAGIC %md
+# MAGIC # DLT Medallion Framework Validation
+# MAGIC
+# MAGIC This notebook demonstrates the usage of the DLT Medallion Framework with both YAML and object-based configuration.
 
 # COMMAND ----------
 
@@ -26,14 +27,15 @@ from dlt_framework.config import (
     SCDConfig,
     MonitoringConfig,
     Metric,
-    UnityTableConfig,
+    DLTTableConfig,
     QuarantineConfig,
     GovernanceConfig,
     ReferenceConfig
 )
-from dlt_framework.decorators import bronze, silver, gold
+from dlt_framework.decorators import Bronze, silver, gold
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Generate Sample Data
 
@@ -66,6 +68,7 @@ def generate_sample_data(spark) -> DataFrame:
     return spark.createDataFrame(data, schema)
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Method 1: Object-Based Configuration
 
@@ -74,11 +77,11 @@ def generate_sample_data(spark) -> DataFrame:
 # Bronze layer configuration with quarantine expectations
 bronze_config = BronzeConfig(
     # Unity Catalog table configuration (required)
-    table=UnityTableConfig(
+    asset=DLTTableConfig(
         name="raw_transactions",
-        catalog="demo",
+        catalog="training",
         schema="bronze",
-        description="Raw transaction data with quality checks and quarantine"
+        comment="Raw transaction data with quality checks and quarantine"
     ),
     # Quarantine configuration
     quarantine=QuarantineConfig(
@@ -133,10 +136,10 @@ bronze_config = BronzeConfig(
 
 # Silver layer configuration
 silver_config = SilverConfig(
-    table=UnityTableConfig(
+    asset=DLTTableConfig(
         name="cleaned_transactions",
-        catalog="demo",
-        schema="silver",
+        catalog="training",
+        schema="bronze",
         description="Cleaned and standardized transaction data"
     ),
     deduplication=True,
@@ -157,10 +160,10 @@ silver_config = SilverConfig(
 
 # Gold layer configuration
 gold_config = GoldConfig(
-    table=UnityTableConfig(
+    asset=DLTTableConfig(
         name="transaction_metrics",
-        catalog="demo",
-        schema="gold",
+        catalog="training",
+        schema="bronze",
         description="Aggregated transaction metrics with dimension references"
     ),
     references=[
@@ -195,6 +198,7 @@ gold_config = GoldConfig(
 )
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Method 2: YAML Configuration
 # MAGIC The YAML configuration is loaded from 'config.yaml' in the same directory.
@@ -206,38 +210,40 @@ notebook_dir = Path().absolute()
 config_path = notebook_dir / "config.yaml"
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Pipeline Implementation with Quarantine Testing
 
 # COMMAND ----------
 
 # Using object-based configuration with quarantine
-@bronze(config=bronze_config)
+@Bronze(config=bronze_config)
 def raw_transactions() -> DataFrame:
     """Ingest raw transaction data with quarantine handling."""
     return generate_sample_data(spark)
 
 # Using YAML configuration
-@silver(config_path=config_path)
-def cleaned_transactions() -> DataFrame:
-    """Clean and standardize transaction data.
+# @silver(config_path=config_path)
+# def cleaned_transactions() -> DataFrame:
+#     """Clean and standardize transaction data.
     
-    Dependencies are managed automatically by DLT based on dlt.read() calls.
-    This ensures proper execution order without needing explicit configuration.
-    """
-    return dlt.read("demo.bronze.raw_transactions")
+#     Dependencies are managed automatically by DLT based on dlt.read() calls.
+#     This ensures proper execution order without needing explicit configuration.
+#     """
+#     return dlt.read("demo.bronze.raw_transactions")
 
 # Using object-based configuration
-@gold(config=gold_config)
-def transaction_metrics() -> DataFrame:
-    """Calculate transaction metrics."""
-    df = dlt.read("demo.silver.cleaned_transactions")
-    return df.groupBy("date").agg(
-        F.sum("amount").alias("daily_revenue"),
-        F.countDistinct("transaction_id").alias("transaction_count")
-    )
+# @gold(config=gold_config)
+# def transaction_metrics() -> DataFrame:
+#     """Calculate transaction metrics."""
+#     df = dlt.read("demo.silver.cleaned_transactions")
+#     return df.groupBy("date").agg(
+#         F.sum("amount").alias("daily_revenue"),
+#         F.countDistinct("transaction_id").alias("transaction_count")
+#     )
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## View Results and Validate Quarantine
 

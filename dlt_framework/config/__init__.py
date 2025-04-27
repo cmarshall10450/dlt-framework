@@ -19,7 +19,8 @@ from .models import (
     ReferenceConfig,
     SCDConfig,
     SilverConfig,
-    UnityTableConfig,
+    DLTTableConfig,
+    DLTViewConfig
 )
 from .manager import ConfigurationManager
 from .utils import merge_configs, load_yaml_file
@@ -40,7 +41,8 @@ __all__ = [
     "ReferenceConfig",
     "SCDConfig",
     "SilverConfig",
-    "UnityTableConfig",
+    "DLTTableConfig",
+    "DLTViewConfig",
     
     # Configuration management
     "ConfigurationManager",

@@ -7,7 +7,7 @@ import yaml
 from pydantic import BaseModel, Field, root_validator
 
 from ..config.models import (
-    Layer, Expectation, Metric, UnityTableConfig as TableConfig,
+    Layer, Expectation, Metric, DLTTableConfig as TableConfig,
     BronzeConfig, SilverConfig, GoldConfig
 )
 from .exceptions import TemplateError

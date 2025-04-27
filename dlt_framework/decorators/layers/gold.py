@@ -19,7 +19,7 @@ import dlt
 from pyspark.sql import DataFrame
 
 from dlt_framework.config import (
-    GoldConfig, Layer, ConfigurationManager, UnityTableConfig
+    GoldConfig, Layer, ConfigurationManager, DLTTableConfig
 )
 from dlt_framework.core import (
     DLTIntegration, DecoratorRegistry, ReferenceManager
@@ -55,7 +55,7 @@ def gold(
         if table_name:
             try:
                 # Create minimum table config with defaults
-                table_config = UnityTableConfig(
+                table_config = DLTTableConfig(
                     name=table_name,
                     catalog="main",  # Default catalog
                     schema_name="default"  # Default schema
@@ -77,7 +77,7 @@ def gold(
             print(f"Error resolving configuration: {e}")
             # Fallback to basic configuration
             gold_config = GoldConfig(
-                table=table_config or UnityTableConfig(
+                table=table_config or DLTTableConfig(
                     name=func.__name__,
                     catalog="main",
                     schema_name="default"

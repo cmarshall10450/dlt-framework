@@ -349,93 +349,6 @@ class GovernanceConfig(ConfigBaseModel):
         return v
 
 
-class UnityTableConfig(ConfigBaseModel):
-    """Unity Catalog table configuration."""
-    name: str = Field(..., description="Name of the table")
-    catalog: str = Field(..., description="Unity Catalog name")
-    schema_name: str = Field(..., description="Schema name", alias="schema")
-    description: Optional[str] = Field(None, description="Description of the table's purpose")
-    properties: Dict[DeltaProperty, Any] = Field(default_factory=dict, description="Delta table properties")
-    column_comments: Dict[str, str] = Field(default_factory=dict, description="Column-level comments")
-    tags: Dict[str, str] = Field(default_factory=dict, description="Table tags")
-
-    @validator("name", "catalog", "schema_name")
-    def validate_identifiers(cls, v, field):
-        """Validate Unity Catalog identifiers."""
-        if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', v):
-            raise ValueError(f"{field.name} must start with letter and contain only letters, numbers, underscores")
-        if len(v) > 255:
-            raise ValueError(f"{field.name} must not exceed 255 characters")
-        return v
-
-    @validator("description")
-    def validate_description(cls, v):
-        """Validate description length."""
-        if v is not None and len(v) > 1000:
-            raise ValueError("Description must not exceed 1000 characters")
-        return v
-
-    def get_full_table_name(self) -> str:
-        """Get the fully qualified table name."""
-        return f"{self.catalog}.{self.schema_name}.{self.name}"
-
-    def get_governance_tags(self, layer: Layer, governance: Optional[GovernanceConfig] = None) -> Dict[str, str]:
-        """Generate governance tags based on configuration.
-        
-        Args:
-            layer: The layer this table belongs to
-            governance: Optional governance configuration
-            
-        Returns:
-            Dictionary of tags for governance and discoverability
-        """
-        # Start with user-defined tags
-        all_tags = dict(self.tags)
-        
-        # Add basic table metadata tags
-        all_tags.update({
-            "layer": layer.value,
-            "catalog": self.catalog,
-            "schema": self.schema_name,
-            "table": self.name,
-            "full_name": self.get_full_table_name()
-        })
-        
-        # Add governance-related tags if configuration is provided
-        if governance:
-            if governance.owner:
-                all_tags["owner"] = governance.owner
-            if governance.steward:
-                all_tags["steward"] = governance.steward
-            if governance.pii_detection:
-                all_tags["pii_detection"] = "enabled"
-            if governance.masking_enabled:
-                all_tags["data_masking"] = "enabled"
-            if governance.retention:
-                all_tags["retention_policy"] = governance.retention
-            
-            # Add data classification tags
-            if governance.classification:
-                all_tags["highest_classification"] = max(
-                    (c.value for c in governance.classification.values()),
-                    default="unclassified"
-                )
-                
-            # Add governance tags
-            all_tags.update(governance.tags)
-        
-        # Add schema evolution tag
-        if governance and governance.schema_evolution:
-            all_tags["schema_evolution"] = "enabled"
-        
-        # Add Delta table property indicators
-        for prop in self.properties:
-            if isinstance(prop, DeltaProperty):
-                all_tags[f"delta_{prop.name.lower()}"] = "enabled"
-        
-        return all_tags
-
-
 class ReferenceConfig(ConfigBaseModel):
     """Reference data configuration."""
     name: str = Field(..., description="Logical name for the reference")
@@ -469,9 +382,174 @@ class ReferenceConfig(ConfigBaseModel):
         return v
 
 
+class DLTAsset(ConfigBaseModel):
+    """Base configuration for all DLT assets (tables and views)."""
+    name: str = Field(..., description="Name of the asset")
+    catalog: str = Field(..., description="Unity Catalog name")
+    schema_name: str = Field(..., description="Schema name", alias="schema")
+    comment: Optional[str] = Field(None, description="Description of the asset's purpose")
+    tags: Dict[str, str] = Field(default_factory=dict, description="Asset tags")
+
+    @validator("name", "catalog", "schema_name")
+    def validate_identifiers(cls, v, field):
+        """Validate Unity Catalog identifiers."""
+        if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', v):
+            raise ValueError(f"{field.name} must start with letter and contain only letters, numbers, underscores")
+        if len(v) > 255:
+            raise ValueError(f"{field.name} must not exceed 255 characters")
+        return v
+
+    @validator("comment")
+    def validate_comment(cls, v):
+        """Validate comment length."""
+        if v is not None and len(v) > 1000:
+            raise ValueError("Comment must not exceed 1000 characters")
+        return v
+
+    def get_full_name(self) -> str:
+        """Get the fully qualified asset name."""
+        return f"{self.catalog}.{self.schema_name}.{self.name}"
+
+    def get_governance_tags(self, layer: Layer, governance: Optional[GovernanceConfig] = None) -> Dict[str, str]:
+        """Generate governance tags based on configuration.
+        
+        Args:
+            layer: The layer this asset belongs to
+            governance: Optional governance configuration
+            
+        Returns:
+            Dictionary of tags for governance and discoverability
+        """
+        # Start with user-defined tags
+        all_tags = dict(self.tags)
+        
+        # Add basic asset metadata tags
+        all_tags.update({
+            "layer": layer.value,
+            "catalog": self.catalog,
+            "schema": self.schema_name,
+            "asset_name": self.name,
+            "full_name": self.get_full_name()
+        })
+        
+        # Add governance-related tags if configuration is provided
+        if governance:
+            if governance.owner:
+                all_tags["owner"] = governance.owner
+            if governance.steward:
+                all_tags["steward"] = governance.steward
+            if governance.pii_detection:
+                all_tags["pii_detection"] = "enabled"
+            if governance.masking_enabled:
+                all_tags["data_masking"] = "enabled"
+            if governance.retention:
+                all_tags["retention_policy"] = governance.retention
+            
+            # Add data classification tags
+            if governance.classification:
+                all_tags["highest_classification"] = max(
+                    (c.value for c in governance.classification.values()),
+                    default="unclassified"
+                )
+                
+            # Add governance tags
+            all_tags.update(governance.tags)
+        
+        return all_tags
+
+
+class DLTTableConfig(DLTAsset):
+    """Configuration for DLT tables with all supported properties."""
+    asset_type: Literal["table"] = "table"
+    spark_conf: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Spark configurations for query execution"
+    )
+    table_properties: Dict[DeltaProperty, Any] = Field(
+        default_factory=dict,
+        description="Delta table properties"
+    )
+    path: Optional[str] = Field(
+        None,
+        description="Storage location for table data"
+    )
+    partition_cols: Optional[List[str]] = Field(
+        None,
+        description="Columns to use for partitioning"
+    )
+    cluster_by: Optional[List[str]] = Field(
+        None,
+        description="Columns to use as clustering keys"
+    )
+    data_schema: Optional[str] = Field(
+        None,
+        description="Schema definition (SQL DDL string or StructType)"
+    )
+    is_temporary: bool = Field(
+        False,
+        description="Create a temporary table not published to metastore"
+    )
+    row_filter: Optional[str] = Field(
+        None,
+        description="Row filter clause for the table"
+    )
+
+    @validator("partition_cols", "cluster_by")
+    def validate_column_lists(cls, v):
+        """Validate column names in lists."""
+        if v is not None:
+            for col in v:
+                if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', col):
+                    raise ValueError(f"Invalid column name: {col}")
+        return v
+
+    @validator("path")
+    def validate_path(cls, v):
+        """Validate storage path if provided."""
+        if v is not None and not v.startswith(("/", "dbfs:", "s3:", "abfss:", "gs:")):
+            raise ValueError("Path must be absolute and use a supported scheme")
+        return v
+
+    def get_governance_tags(self, layer: Layer, governance: Optional[GovernanceConfig] = None) -> Dict[str, str]:
+        """Get governance-specific tags, excluding properties available in table metadata.
+        
+        Args:
+            layer: The layer this asset belongs to
+            governance: Optional governance configuration
+            
+        Returns:
+            Dictionary of governance-specific tags
+        """
+        tags = super().get_governance_tags(layer, governance)
+        
+        # Add only governance-specific tags
+        tags["asset_type"] = "table"
+        
+        if self.temporary:
+            tags["lifecycle"] = "temporary"
+            
+        return tags
+
+
+class DLTViewConfig(DLTAsset):
+    """Configuration for DLT views with supported properties."""
+    asset_type: Literal["view"] = "view"  # Discriminator value
+
+    def get_governance_tags(self, layer: Layer, governance: Optional[GovernanceConfig] = None) -> Dict[str, str]:
+        """Extend base governance tags with view-specific properties."""
+        tags = super().get_governance_tags(layer, governance)
+        tags["asset_type"] = "view"
+        return tags
+
+
+# Update BaseLayerConfig to use either table or view configuration
 class BaseLayerConfig(ConfigBaseModel):
     """Base configuration for all layers."""
-    table: UnityTableConfig = Field(..., description="Unity Catalog table configuration")
+    asset: DLTTableConfig | DLTViewConfig = Field(
+        ..., 
+        description="DLT asset configuration (table or view)",
+        discriminator="asset_type"
+    )
     version: Optional[str] = Field(None, description="Configuration version")
     monitoring: Optional[MonitoringConfig] = Field(None, description="Monitoring configuration")
     governance: Optional[GovernanceConfig] = Field(None, description="Governance configuration")
@@ -489,7 +567,6 @@ class BaseLayerConfig(ConfigBaseModel):
 class BronzeConfig(BaseLayerConfig):
     """Bronze layer specific configuration."""
     quarantine: Optional[QuarantineConfig] = Field(None, description="Quarantine configuration")
-    schema_evolution: bool = Field(True, description="Whether schema evolution is allowed")
     
     @root_validator(pre=True)
     def process_quarantine(cls, values):

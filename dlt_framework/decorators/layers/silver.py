@@ -22,7 +22,7 @@ import dlt
 from dlt_framework.core import DLTIntegration, DecoratorRegistry, ReferenceManager
 from dlt_framework.config import (
     SilverConfig, ConfigurationManager, Layer, Expectation, 
-    ExpectationAction, UnityTableConfig
+    ExpectationAction, DLTTableConfig
 )
 
 
@@ -55,7 +55,7 @@ def silver(
         if table_name:
             try:
                 # Create minimum table config with defaults
-                table_config = UnityTableConfig(
+                table_config = DLTTableConfig(
                     name=table_name,
                     catalog="main",  # Default catalog
                     schema_name="default"  # Default schema
@@ -77,7 +77,7 @@ def silver(
             print(f"Error resolving configuration: {e}")
             # Fallback to basic configuration
             silver_config = SilverConfig(
-                table=table_config or UnityTableConfig(
+                table=table_config or DLTTableConfig(
                     name=func.__name__,
                     catalog="main",
                     schema_name="default"
